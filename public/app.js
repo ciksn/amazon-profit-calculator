@@ -142,8 +142,8 @@ function categoryCard(project,index) {
     return `<button class="site-toggle ${listing?.selected ? 'active':''}" type="button" data-toggle-site="${country.code}" data-project-id="${project.id}" aria-pressed="${Boolean(listing?.selected)}" title="${listing?.selected ? '移除' : '加入'}${country.name}站">${marketCode(country.code)}</button>`;
   }).join('');
   return `<article class="category-card ${expanded ? 'expanded':''}" data-project-card="${project.id}">
-    <div class="category-main-row">
-      <button class="category-info" type="button" data-edit-project="${project.id}" aria-label="编辑 ${escapeHtml(project.name)}">
+    <div class="category-main-row" data-expand-row="${project.id}">
+      <button class="category-info" type="button" data-expand-area aria-expanded="${expanded}" aria-label="${expanded ? '收起' : '展开'} ${escapeHtml(project.name)} 的站点数据">
         <span class="category-index">${String(index + 1).padStart(2,'0')}</span>
         <span class="category-image">${productImage}</span>
         <span class="category-name"><small>品名</small><b>${escapeHtml(project.name || '未命名品类')}</b></span>
@@ -154,7 +154,7 @@ function categoryCard(project,index) {
       <div class="category-sites"><small>测算站点</small><div>${siteButtons}</div></div>
       <div class="category-row-actions">
         <button class="delete-category" type="button" data-delete-project="${project.id}" aria-label="删除品类" title="删除品类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button>
-        <button class="expand-category" type="button" data-expand-project="${project.id}" aria-expanded="${expanded}" aria-label="${expanded ? '收起' : '展开'}站点数据" title="${expanded ? '收起' : '展开'} ${selected.length} 个站点"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
+        <button class="edit-category" type="button" data-edit-project="${project.id}" aria-label="编辑 ${escapeHtml(project.name)}" title="编辑品类信息">编辑</button>
       </div>
     </div>
     ${expanded ? marketTable(project,selected) : ''}
@@ -197,7 +197,11 @@ function bindCategoryEvents() {
   $$('[data-add-empty]').forEach((button) => button.onclick = addProject);
   $$('[data-edit-project]').forEach((button) => button.onclick = () => openProductModal(button.dataset.editProject));
   $$('[data-toggle-site]').forEach((button) => button.onclick = () => toggleCountry(button.dataset.projectId,button.dataset.toggleSite));
-  $$('[data-expand-project]').forEach((button) => button.onclick = () => toggleExpanded(button.dataset.expandProject));
+  $$('[data-expand-row]').forEach((row) => row.onclick = (event) => {
+    const control = event.target.closest('button,input,select,a,label');
+    if (control && !control.matches('[data-expand-area]')) return;
+    toggleExpanded(row.dataset.expandRow);
+  });
   $$('[data-delete-project]').forEach((button) => button.onclick = () => deleteProject(button.dataset.deleteProject));
   $$('[data-edit-commission]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editCommission,'commission'));
   $$('[data-edit-freight]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editFreight,'freight'));
