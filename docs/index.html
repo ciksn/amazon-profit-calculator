@@ -25,43 +25,22 @@
 
     <main>
       <section id="calculatorView" class="view">
-        <div class="page-head">
-          <div><p class="eyebrow">GLOBAL PROFIT CALCULATOR</p><h1>多国利润，一次算清</h1><p>产品数据只填一次，澳洲优先展示，其余站点并行测算。</p></div>
+        <div class="workspace-head">
+          <div><p class="eyebrow">GLOBAL PROFIT CALCULATOR</p><h1>MarginGo</h1></div>
+          <div class="workspace-actions"><span class="save-state" id="saveState">已保存</span><button class="project-add-button" id="addProjectBtn" type="button"><span>＋</span> 增加品类</button></div>
         </div>
 
-        <div class="project-bar"><div class="project-tabs" id="projectTabs"></div><div class="project-actions"><button class="project-add-button" id="addProjectBtn" type="button"><span>＋</span> 新增品类</button><button class="more-button" id="projectMenuBtn" type="button" title="删除当前品类" aria-label="删除当前品类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button></div></div>
+        <section class="site-portal" aria-labelledby="portalTitle">
+          <div class="portal-label"><span class="portal-icon">↗</span><div><b id="portalTitle">站点传送门</b><small>站点直达 · 邮编点击复制</small></div></div>
+          <div class="portal-list" id="sitePortal"></div>
+        </section>
 
-        <div class="calculator-grid">
-          <div class="left-column">
-            <section class="card shared-card">
-              <div class="card-head"><div><span class="step">01</span><div><h2>产品基础数据</h2><p>一次录入，全部国家共用</p></div></div><span class="save-state" id="saveState">已保存</span></div>
-              <div class="form-grid">
-                <label class="field span-2"><span>品类 / 产品名称</span><input id="projectName" data-project="name" placeholder="例如：浴室置物架"></label>
-                <label class="field"><span>产品成本</span><div class="input-affix"><b>¥</b><input id="costCny" data-project="cost_cny" type="number" min="0" step="0.01"><em>CNY</em></div></label>
-                <label class="field"><span>尺寸单位</span><select id="dimensionUnit" data-project="dimension_unit"><option value="cm">厘米 cm</option><option value="ft">英尺 ft</option></select></label>
-                <div class="field span-2 dimension-field"><div class="field-label-row"><span>产品尺寸（长 × 宽 × 高）</span><button class="clipboard-dimension-button" id="readDimensionsBtn" type="button" title="读取剪贴板中的完整尺寸">识别剪贴板</button></div><div class="dimension-row"><input id="length" data-project="length" data-dimension-input type="number" min="0" step="0.01" aria-label="产品长度"><i>×</i><input id="width" data-project="width" data-dimension-input type="number" min="0" step="0.01" aria-label="产品宽度"><i>×</i><input id="height" data-project="height" data-dimension-input type="number" min="0" step="0.01" aria-label="产品高度"><em id="dimensionSuffix">cm</em></div><small class="dimension-paste-hint" id="dimensionPasteHint">支持数字三连或 D × W × H 格式；也可在任一尺寸框直接粘贴</small></div>
-                <label class="field"><span>产品重量</span><div class="input-affix"><input id="weight" data-project="weight" type="number" min="0" step="0.001"><select id="weightUnit" data-project="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
-              </div>
-            </section>
-
-            <section class="card country-card">
-              <div class="card-head"><div><span class="step">02</span><div><h2>选择计算站点</h2><p>澳洲默认勾选并始终优先</p></div></div><span class="selected-count" id="selectedCount">1 个站点</span></div>
-              <div class="country-selector" id="countrySelector"></div>
-            </section>
-
-            <section class="card listing-card">
-              <div class="card-head"><div><span class="step">03</span><div><h2>站点售价与佣金</h2><p>粘贴父品类即可自动匹配佣金</p></div></div></div>
-              <div class="country-tabs" id="countryTabs"></div>
-              <div id="listingEditor"></div>
-            </section>
+        <section class="category-workspace">
+          <div class="category-list-head">
+            <div><b>品类测算</b><span id="categoryCount">0 个品类</span></div>
+            <small>点击品类信息可编辑 · 选择站点后展开对应数据</small>
           </div>
-
-          <aside class="result-panel" id="resultPanel"><div class="empty-result"><div class="spinner"></div><p>正在计算利润…</p></div></aside>
-        </div>
-
-        <section class="comparison-section">
-          <div class="section-title"><div><p class="eyebrow">MARKET COMPARISON</p><h2>已选站点利润对比</h2></div><span>澳洲始终置顶</span></div>
-          <div class="comparison-grid" id="comparisonGrid"></div>
+          <div class="category-list" id="categoryList"><div class="empty-result"><div class="spinner"></div><p>正在读取品类…</p></div></div>
         </section>
       </section>
 
@@ -78,6 +57,27 @@
         <section class="card admin-card"><div class="admin-toolbar"><div><h2 id="adminTitle">税率与汇率</h2><p id="adminDescription">汇率为 1 单位当地货币对应的人民币金额。</p></div><div class="admin-filter"><select id="adminCountryFilter"><option value="">全部国家</option></select><input id="adminSearch" placeholder="搜索规则…"></div></div><div class="table-wrap" id="adminTable"></div></section>
       </section>
     </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="productModal" role="dialog" aria-modal="true" aria-labelledby="productModalTitle">
+    <div class="compact-modal product-modal-card">
+      <div class="modal-head"><div><p class="eyebrow">PRODUCT INFO</p><h2 id="productModalTitle">编辑品类信息</h2></div><button class="modal-close" type="button" data-close-modal aria-label="关闭">×</button></div>
+      <form id="productForm" class="compact-form">
+        <label class="field span-2"><span>品名</span><input id="modalProjectName" name="name" maxlength="20" placeholder="例如：浴室置物架"></label>
+        <label class="field"><span>成本</span><div class="input-affix"><b>¥</b><input name="cost_cny" type="number" min="0" step="0.01"><em>CNY</em></div></label>
+        <label class="field"><span>尺寸单位</span><select name="dimension_unit"><option value="cm">厘米 cm</option><option value="ft">英尺 ft</option></select></label>
+        <div class="field span-2 dimension-field"><div class="field-label-row"><span>长 × 宽 × 高</span><button class="clipboard-dimension-button" id="readDimensionsBtn" type="button">识别剪贴板</button></div><div class="dimension-row"><input name="length" data-modal-dimension type="number" min="0" step="0.01" aria-label="产品长度"><i>×</i><input name="width" data-modal-dimension type="number" min="0" step="0.01" aria-label="产品宽度"><i>×</i><input name="height" data-modal-dimension type="number" min="0" step="0.01" aria-label="产品高度"><em id="dimensionSuffix">cm</em></div><small class="dimension-paste-hint">支持 27.2 × 12.5 × 54 cm；也可直接粘贴到任一尺寸框</small></div>
+        <label class="field span-2 weight-field"><span>重量</span><div class="input-affix"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
+        <div class="modal-actions span-2"><button class="secondary-button" type="button" data-close-modal>取消</button><button class="primary-button" type="submit">保存品类</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="listingModal" role="dialog" aria-modal="true" aria-labelledby="listingModalTitle">
+    <div class="compact-modal listing-modal-card">
+      <div class="modal-head"><div><p class="eyebrow">MARKET SETTINGS</p><h2 id="listingModalTitle">站点设置</h2></div><button class="modal-close" type="button" data-close-modal aria-label="关闭">×</button></div>
+      <div id="listingModalBody"></div>
+    </div>
   </div>
   <div class="toast" id="toast"></div>
   <script src="./config.js"></script>
