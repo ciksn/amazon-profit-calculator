@@ -18,18 +18,17 @@ const saveTimers = new Map();
 const apiBase = String(window.MARGINGO_API_BASE || '').replace(/\/$/,'');
 
 const MARKET_PORTALS = [
-  ['US','纽约','10001','https://www.amazon.com'],['CA','多伦多','M5V 3A8','https://www.amazon.ca'],
-  ['MX','墨西哥城','06600','https://www.amazon.com.mx'],['BR','圣保罗','01001-000','https://www.amazon.com.br'],
-  ['UK','伦敦','SW1A 1AA','https://www.amazon.co.uk'],['IE','都柏林','D02 X285','https://www.amazon.ie'],
-  ['DE','柏林','10115','https://www.amazon.de'],['FR','巴黎','75001','https://www.amazon.fr'],
-  ['BE','布鲁塞尔','1000','https://www.amazon.com.be'],['ES','马德里','28001','https://www.amazon.es'],
-  ['IT','罗马','00184','https://www.amazon.it'],['NL','阿姆斯特丹','1012 JS','https://www.amazon.nl'],
-  ['PL','华沙','00-001','https://www.amazon.pl'],['SE','斯德哥尔摩','111 20','https://www.amazon.se'],
-  ['TR','伊斯坦布尔','34000','https://www.amazon.com.tr'],['ZA','约翰内斯堡','2000','https://www.amazon.co.za'],
-  ['EG','开罗','11511','https://www.amazon.eg'],['SA','利雅得','11564','https://www.amazon.sa'],
-  ['AE','迪拜','00000','https://www.amazon.ae'],['IN','新德里','110001','https://www.amazon.in'],
-  ['SG','新加坡','018989','https://www.amazon.sg'],['AU','悉尼','2000','https://www.amazon.com.au'],
-  ['JP','东京','100-0001','https://www.amazon.co.jp']
+  ['US','纽约','10001','https://www.amazon.com'],
+  ['AU','悉尼','2000','https://www.amazon.com.au'],
+  ['UK','伦敦','SW1A 1AA','https://www.amazon.co.uk'],
+  ['DE','柏林','10115','https://www.amazon.de'],
+  ['FR','巴黎','75000','https://www.amazon.fr'],
+  ['IT','罗马','00100','https://www.amazon.it'],
+  ['JP','东京','163-8001','https://www.amazon.co.jp'],
+  ['CA','多伦多','M4Y1M7','https://www.amazon.ca'],
+  ['AE','迪拜','00000','https://www.amazon.ae'],
+  ['SA','利雅得','11564','https://www.amazon.sa'],
+  ['MX','墨西哥城','11529','https://www.amazon.com.mx']
 ];
 
 async function api(url, options={}) {
