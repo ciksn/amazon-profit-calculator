@@ -198,7 +198,7 @@ function bindCategoryEvents() {
   $$('[data-edit-commission]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editCommission,'commission'));
   $$('[data-edit-freight]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editFreight,'freight'));
   $$('[data-edit-tax]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editTax,'tax'));
-  $$('[data-listing-input]').forEach((input) => input.onchange = () => saveInlineListing(input));
+  $$('[data-listing-input]').forEach((input) => input.onblur = () => saveInlineListing(input));
 }
 
 function toggleExpanded(projectId) {
