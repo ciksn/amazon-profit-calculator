@@ -602,3 +602,8 @@ body.modal-open { overflow: hidden; }
     font-size: 11px;
   }
 }
+
+/* Keep operation feedback above the blurred modal backdrop. */
+.toast {
+  z-index: 300;
+}
