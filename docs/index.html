@@ -63,11 +63,11 @@
     <div class="compact-modal product-modal-card">
       <div class="modal-head"><div><p class="eyebrow">PRODUCT INFO</p><h2 id="productModalTitle">编辑品类信息</h2></div><button class="modal-close" type="button" data-close-modal aria-label="关闭">×</button></div>
       <form id="productForm" class="compact-form">
-        <label class="field span-2"><span>品名</span><input id="modalProjectName" name="name" maxlength="20" placeholder="例如：浴室置物架"></label>
+        <label class="field"><span>品名</span><input id="modalProjectName" name="name" maxlength="20" placeholder="例如：浴室置物架"></label>
         <label class="field"><span>成本</span><div class="input-affix"><b>¥</b><input name="cost_cny" type="number" min="0" step="0.01"><em>CNY</em></div></label>
         <label class="field"><span>尺寸单位</span><select name="dimension_unit"><option value="cm">厘米 cm</option><option value="ft">英尺 ft</option></select></label>
+        <label class="field weight-field"><span>重量</span><div class="input-affix"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
         <div class="field span-2 dimension-field"><div class="field-label-row"><span>长 × 宽 × 高</span><button class="clipboard-dimension-button" id="readDimensionsBtn" type="button">识别剪贴板</button></div><div class="dimension-row"><input name="length" data-modal-dimension type="number" min="0" step="0.01" aria-label="产品长度"><i>×</i><input name="width" data-modal-dimension type="number" min="0" step="0.01" aria-label="产品宽度"><i>×</i><input name="height" data-modal-dimension type="number" min="0" step="0.01" aria-label="产品高度"><em id="dimensionSuffix">cm</em></div><small class="dimension-paste-hint">支持 27.2 × 12.5 × 54 cm；也可直接粘贴到任一尺寸框</small></div>
-        <label class="field span-2 weight-field"><span>重量</span><div class="input-affix"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
         <div class="modal-actions span-2"><button class="secondary-button" type="button" data-close-modal>取消</button><button class="primary-button" type="submit">保存品类</button></div>
       </form>
     </div>
