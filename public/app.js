@@ -121,7 +121,7 @@ async function copyPostal(postal) {
 function renderCategoryList() {
   $('#categoryCount').textContent = `${state.projects.length} 个品类`;
   if (!state.projects.length) {
-    $('#categoryList').innerHTML = `<div class="empty-categories"><div class="empty-category-icon">＋</div><b>还没有测算品类</b><p>点击右上角“增加品类”开始录入。</p></div>`;
+    $('#categoryList').innerHTML = `<div class="empty-categories"><div class="empty-category-icon">＋</div><b>还没有品类数据</b><p>先增加一个品类，再填写产品信息和选择测算站点。</p><button class="project-add-button empty-add-button" type="button" data-add-empty>＋ 增加品类</button></div>`;
     bindCategoryEvents();
     return;
   }
@@ -150,7 +150,7 @@ function categoryCard(project,index) {
       <div class="category-sites"><small>测算站点</small><div>${siteButtons}</div></div>
       <div class="category-row-actions">
         <button class="delete-category" type="button" data-delete-project="${project.id}" aria-label="删除品类" title="删除品类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button>
-        <button class="expand-category" type="button" data-expand-project="${project.id}" aria-expanded="${expanded}" aria-label="${expanded ? '收起' : '展开'}站点数据"><span>${selected.length}</span><i>⌄</i></button>
+        <button class="expand-category" type="button" data-expand-project="${project.id}" aria-expanded="${expanded}" aria-label="${expanded ? '收起' : '展开'}站点数据" title="${expanded ? '收起' : '展开'} ${selected.length} 个站点"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
       </div>
     </div>
     ${expanded ? marketTable(project,selected) : ''}
@@ -179,23 +179,26 @@ function marketRow(project,listing) {
   return `<div class="market-data-row ${cls}">
     <div class="market-country"><span>${country.flag}</span><div><b>${marketCode(country.code)}</b><small>${country.name}</small></div>${warning}</div>
     <label class="table-input"><b>${escapeHtml(listing.symbol)}</b><input type="number" min="0" step="0.01" value="${listing.sale_price || ''}" placeholder="0.00" data-listing-input="sale_price" data-project-id="${project.id}" data-country-code="${listing.country_code}" aria-label="${country.name}站售价"></label>
-    <label class="table-input percent"><input type="number" min="0" max="100" step="0.1" value="${commission}" data-listing-input="referral_rate_override" data-project-id="${project.id}" data-country-code="${listing.country_code}" aria-label="${country.name}站佣金"><b>%</b></label>
+    <button class="calculated-cell cell-editor" type="button" data-edit-commission="${listing.country_code}" data-project-id="${project.id}" aria-label="编辑${country.name}站佣金"><b>${formatNumber(commission,2)}%</b><small>${listing.referral_rate_override == null ? escapeHtml(listing.matched_category || '点击识别品类') : '手动佣金'}</small></button>
     <div class="calculated-cell"><b>${fba}</b><small>${escapeHtml(result?.size_tier_name || '待计算')}</small></div>
-    <div class="calculated-cell"><b>${freight}</b><small>${result?.freight_pricing_mode === 'cbm' ? '按方' : '按计费重'}</small></div>
+    <button class="calculated-cell cell-editor" type="button" data-edit-freight="${listing.country_code}" data-project-id="${project.id}" aria-label="查看并编辑${country.name}站头程费用"><b>${freight}</b><small>${result?.freight_pricing_mode === 'cbm' ? '按方 · 点击查看' : '按计费重 · 点击查看'}</small></button>
     <div class="calculated-cell"><b>${exchange}</b><small>1 ${escapeHtml(listing.currency)}</small></div>
     <div class="profit-cell ${cls}"><b>${hasPrice ? profit : '—'}</b><small>${hasPrice ? '单件' : '待填售价'}</small></div>
     <div class="rate-cell ${cls}"><b>${hasPrice ? `${Number(result?.profit_rate || 0).toFixed(1)}%` : '—'}</b></div>
-    <button class="listing-settings ${listing.country_code === 'JP' ? 'special':''}" type="button" data-edit-listing="${listing.country_code}" data-project-id="${project.id}" title="${listing.country_code === 'JP' ? '日本税项与品类设置' : '品类与运费设置'}">${listing.country_code === 'JP' ? '日本税项' : '•••'}</button>
+    ${listing.country_code === 'JP' ? `<button class="listing-settings special" type="button" data-edit-tax="JP" data-project-id="${project.id}" title="日本进口税项设置">日本税项</button>` : '<span></span>'}
   </div>`;
 }
 
 function bindCategoryEvents() {
+  $$('[data-add-empty]').forEach((button) => button.onclick = addProject);
   $$('[data-edit-project]').forEach((button) => button.onclick = () => openProductModal(button.dataset.editProject));
   $$('[data-toggle-site]').forEach((button) => button.onclick = () => toggleCountry(button.dataset.projectId,button.dataset.toggleSite));
   $$('[data-expand-project]').forEach((button) => button.onclick = () => toggleExpanded(button.dataset.expandProject));
   $$('[data-delete-project]').forEach((button) => button.onclick = () => deleteProject(button.dataset.deleteProject));
-  $$('[data-edit-listing]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editListing));
-  $$('[data-listing-input]').forEach((input) => input.oninput = () => saveInlineListing(input));
+  $$('[data-edit-commission]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editCommission,'commission'));
+  $$('[data-edit-freight]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editFreight,'freight'));
+  $$('[data-edit-tax]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editTax,'tax'));
+  $$('[data-listing-input]').forEach((input) => input.onchange = () => saveInlineListing(input));
 }
 
 function toggleExpanded(projectId) {
@@ -314,16 +317,18 @@ async function deleteProject(projectId) {
   } catch (error) { toast(error.message); }
 }
 
-function openListingModal(projectId,code) {
-  state.editingListing = { projectId:Number(projectId),code };
+function openListingModal(projectId,code,mode='commission') {
+  state.editingListing = { projectId:Number(projectId),code,mode };
   renderListingModal(); openModal($('#listingModal'));
 }
 
 function renderListingModal() {
-  const { projectId,code } = state.editingListing;
+  const { projectId,code,mode } = state.editingListing;
   const project = findProject(projectId);
   const listing = project.listings.find((item) => item.country_code === code);
   const country = countryFor(code);
+  const result = resultFor(projectId,code);
+  const commission = listing.referral_rate_override ?? listing.matched_referral_rate ?? result?.referral_base_rate ?? 15;
   const freightIsCbm = listing.freight_pricing_mode === 'cbm';
   const freightField = freightIsCbm ? 'freight_price_per_cbm_cny' : 'freight_price_per_kg_cny';
   const autoDeclaredValue = (Number(listing.sale_price) || 0) * Number(listing.declaration_ratio ?? 0.15);
@@ -332,27 +337,36 @@ function renderListingModal() {
     <div class="tariff-lookup-result" id="tariffLookupResult">${listing.customs_schedule_date ? `当前：${escapeHtml(listing.customs_rate_type || '人工填写')} ${Number(listing.customs_rate) || 0}% · 税则 ${escapeHtml(listing.customs_schedule_date)}` : '查询失败时仍可手动填写关税比例'}</div>
     <div class="compact-form japan-form"><label class="field"><span>申报比例</span><div class="input-affix"><input name="declaration_ratio" type="number" min="0" max="100" step="0.1" value="${Number(listing.declaration_ratio ?? 0.15) * 100}"><em>%</em></div></label><label class="field"><span>申报价（留空自动）</span><div class="input-affix"><b>${listing.symbol}</b><input name="declared_value_override" type="number" min="0" step="0.01" value="${listing.declared_value_override ?? ''}" placeholder="自动 ${autoDeclaredValue.toFixed(2)}"></div></label><label class="field"><span>关税比例</span><div class="input-affix"><input name="customs_rate" type="number" min="0" max="100" step="0.1" value="${Number(listing.customs_rate) || 0}"><em>%</em></div></label><label class="field"><span>消费税比例</span><div class="input-affix"><input name="consumption_tax_rate" type="number" min="0" max="100" step="0.1" value="${Number(listing.consumption_tax_rate ?? 10)}"><em>%</em></div></label></div>
   </section>` : '';
-  $('#listingModalTitle').textContent = `${country.flag} ${country.name}站设置`;
+  const commissionSection = mode === 'commission' ? `<section class="modal-section"><div class="modal-section-title"><div><b>类目佣金</b><small>可粘贴父品类自动识别，也可以直接填写佣金</small></div></div>
+    <div class="compact-form"><label class="field span-2"><span>亚马逊父品类名称</span><div class="category-actions"><input name="category_text" value="${escapeHtml(listing.category_text)}" placeholder="例如 Home & Kitchen"><button class="match-button" id="matchCommission" type="button">智能匹配</button></div><div class="match-result" id="matchResult">${listing.matched_category ? `${listing.commission_fallback ? '使用默认' : '已匹配'}：${escapeHtml(listing.matched_category)} · ${listing.matched_referral_rate}%` : '粘贴父品类后点击匹配'}</div></label><label class="field span-2"><span>手动佣金比例（留空使用自动匹配）</span><div class="input-affix"><input name="referral_rate_override" type="number" min="0" max="100" step="0.1" value="${listing.referral_rate_override ?? ''}" placeholder="当前自动 ${formatNumber(commission,2)}"><em>%</em></div></label></div>
+  </section>` : '';
+  const freightSection = mode === 'freight' ? `<section class="modal-section"><div class="modal-section-title"><div><b>头程费用</b><small>查看本品类计算依据，并可修改该站点货代单价</small></div></div>
+    <div class="freight-detail-grid"><div><small>计费方式</small><b>${freightIsCbm ? '按体积（立方米）' : '按计费重量'}</b></div><div><small>当前头程费用</small><b>${result ? `${result.symbol}${result.freight_fee.toFixed(2)}` : '待计算'}</b></div><div><small>${freightIsCbm ? '商品体积' : '实际 / 体积重'}</small><b>${freightIsCbm ? `${formatNumber(result?.volume_cbm,6)} m³` : `${formatNumber(result?.actual_weight_kg,3)} / ${formatNumber(result?.volume_weight_kg,3)} kg`}</b></div><div><small>${freightIsCbm ? '计算公式' : '头程计费重'}</small><b>${freightIsCbm ? `${formatNumber(result?.volume_cbm,6)} × ¥${formatNumber(listing[freightField])}` : `${formatNumber(result?.billable_weight_kg,3)} kg`}</b></div></div>
+    <div class="compact-form freight-rate-form"><label class="field span-2"><span>货代单价（修改后用于该站点全部品类）</span><div class="input-affix"><b>¥</b><input name="freight_rate" type="number" min="0" step="0.01" value="${Number(listing[freightField]) || 0}"><em>${freightIsCbm ? '元/方' : '元/KG'}</em></div></label></div>
+  </section>` : '';
+  $('#listingModalTitle').textContent = `${country.flag} ${country.name}站${mode === 'commission' ? '佣金' : mode === 'freight' ? '头程费用' : '税项'}设置`;
   $('#listingModalBody').innerHTML = `<form id="listingSettingsForm">
-    <section class="modal-section"><div class="modal-section-title"><div><b>品类与头程</b><small>用于佣金匹配与头程费用计算</small></div></div>
-      <div class="compact-form"><label class="field span-2"><span>亚马逊父品类名称</span><div class="category-actions"><input name="category_text" value="${escapeHtml(listing.category_text)}" placeholder="例如 Home & Kitchen"><button class="match-button" id="matchCommission" type="button">智能匹配</button></div><div class="match-result" id="matchResult">${listing.matched_category ? `${listing.commission_fallback ? '使用默认' : '已匹配'}：${escapeHtml(listing.matched_category)} · ${listing.matched_referral_rate}%` : '粘贴父品类后点击匹配'}</div></label><label class="field span-2"><span>货代单价</span><div class="input-affix"><b>¥</b><input name="freight_rate" type="number" min="0" step="0.01" value="${Number(listing[freightField]) || 0}"><em>${freightIsCbm ? '元/方' : '元/KG'}</em></div></label></div>
-    </section>${japanFields}
+    ${commissionSection}${freightSection}${mode === 'tax' && code === 'JP' ? japanFields : ''}
     <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>取消</button><button class="primary-button" type="submit">保存设置</button></div>
   </form>`;
   $('#listingSettingsForm').onsubmit = saveListingSettings;
-  $('#matchCommission').onclick = matchCommission;
-  if (code === 'JP') $('#lookupJapanTariff').onclick = () => lookupJapanTariff();
+  if ($('#matchCommission')) $('#matchCommission').onclick = matchCommission;
+  if (mode === 'tax' && code === 'JP') $('#lookupJapanTariff').onclick = () => lookupJapanTariff();
   $$('[data-close-modal]',$('#listingModalBody')).forEach((button) => button.onclick = () => closeModal($('#listingModal')));
 }
 
 async function saveListingSettings(event) {
   event.preventDefault();
-  const { projectId,code } = state.editingListing;
+  const { projectId,code,mode } = state.editingListing;
   const project = findProject(projectId);
   const listing = project.listings.find((item) => item.country_code === code);
   const form = event.currentTarget;
-  const changes = { category_text:formField(form,'category_text').value.trim() };
-  if (code === 'JP') {
+  const changes = {};
+  if (mode === 'commission') {
+    changes.category_text = formField(form,'category_text').value.trim();
+    changes.referral_rate_override = formField(form,'referral_rate_override').value === '' ? null : Number(formField(form,'referral_rate_override').value);
+  }
+  if (mode === 'tax' && code === 'JP') {
     changes.customs_hs_code = $('#customsHsCode').value.replace(/\D/g,'');
     changes.customs_preference = $('#customsPreference').value;
     changes.declaration_ratio = (Number(formField(form,'declaration_ratio').value) || 0) / 100;
@@ -360,11 +374,19 @@ async function saveListingSettings(event) {
     changes.customs_rate = Number(formField(form,'customs_rate').value) || 0;
     changes.consumption_tax_rate = Number(formField(form,'consumption_tax_rate').value) || 0;
   }
-  const freightField = listing.freight_pricing_mode === 'cbm' ? 'price_per_cbm_cny' : 'price_per_kg_cny';
   try {
     setSaveState('保存中…');
-    await api(`/api/rules/freight/${listing.freight_rule_id}`,{ method:'PUT',body:JSON.stringify({ [freightField]:Number(formField(form,'freight_rate').value) || 0 }) });
-    const updated = await api(`/api/projects/${projectId}/countries/${code}`,{ method:'PUT',body:JSON.stringify(changes) });
+    let updated;
+    if (mode === 'freight') {
+      const freightField = listing.freight_pricing_mode === 'cbm' ? 'price_per_cbm_cny' : 'price_per_kg_cny';
+      await api(`/api/rules/freight/${listing.freight_rule_id}`,{ method:'PUT',body:JSON.stringify({ [freightField]:Number(formField(form,'freight_rate').value) || 0 }) });
+      state.projects = await Promise.all(state.projects.map((item) => api(`/api/projects/${item.id}`)));
+      updated = findProject(projectId);
+    } else {
+      updated = Object.keys(changes).length
+        ? await api(`/api/projects/${projectId}/countries/${code}`,{ method:'PUT',body:JSON.stringify(changes) })
+        : await api(`/api/projects/${projectId}`);
+    }
     replaceProject(updated); closeModal($('#listingModal')); await calculateAll(); setSaveState('已保存'); toast('站点设置已更新');
   } catch (error) { setSaveState('保存失败',true); toast(error.message); }
 }

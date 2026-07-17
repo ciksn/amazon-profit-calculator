@@ -233,18 +233,18 @@ body.modal-open { overflow: hidden; }
 .workspace-actions .save-state { min-width:58px; text-align:right; }
 .save-state.save-error,.save-state.save-error::before { color:var(--red); }
 
-.site-portal { display:flex; align-items:center; gap:18px; margin-bottom:17px; padding:10px 13px; background:#fff; border:1px solid var(--line); border-radius:13px; box-shadow:0 5px 18px rgba(20,20,24,.025); }
+.site-portal { display:flex; align-items:flex-start; gap:18px; margin-bottom:20px; padding:14px 16px; background:#fff; border:1px solid var(--line); border-radius:13px; box-shadow:0 5px 18px rgba(20,20,24,.025); }
 .portal-label { display:flex; align-items:center; gap:9px; flex:0 0 auto; padding-right:16px; border-right:1px solid var(--line); }
 .portal-label .portal-icon { width:28px; height:28px; display:grid; place-items:center; border-radius:8px; background:var(--orange-soft); color:var(--orange); font-weight:900; }
 .portal-label b,.portal-label small { display:block; white-space:nowrap; }
-.portal-label b { font-size:12px; }
-.portal-label small { margin-top:2px; color:#aaa; font-size:9px; }
-.portal-list { min-width:0; display:flex; gap:4px; align-items:center; overflow-x:auto; padding-bottom:2px; scrollbar-width:thin; scrollbar-color:#ddd transparent; }
-.portal-site { flex:0 0 auto; display:flex; align-items:center; border:1px solid #eeeef0; border-radius:8px; overflow:hidden; background:#fafafa; }
-.portal-site a,.portal-site button { height:27px; border:0; display:flex; align-items:center; text-decoration:none; }
-.portal-site a { padding:0 7px; color:#28282b; background:#fff; font-size:10px; font-weight:900; letter-spacing:.25px; }
+.portal-label b { font-size:14px; }
+.portal-label small { margin-top:3px; color:#999; font-size:11px; }
+.portal-list { min-width:0; width:100%; display:grid; grid-template-columns:repeat(auto-fit,minmax(68px,1fr)); gap:7px; overflow:visible; }
+.portal-site { min-width:0; display:flex; flex-direction:column; align-items:stretch; border:1px solid #e8e8eb; border-radius:9px; overflow:hidden; background:#fafafa; }
+.portal-site a,.portal-site button { width:100%; height:29px; border:0; display:flex; align-items:center; justify-content:center; text-decoration:none; }
+.portal-site a { padding:0 7px; color:#28282b; background:#fff; font-size:12px; font-weight:900; letter-spacing:.25px; }
 .portal-site a:hover { background:#242427; color:#fff; }
-.portal-site button { padding:0 7px; color:#9a9aa0; background:#fafafa; border-left:1px solid #eeeef0; font-size:9px; }
+.portal-site button { padding:0 5px; color:#85858c; background:#fafafa; border-top:1px solid #eeeef0; font-size:10px; white-space:nowrap; }
 .portal-site button:hover { color:var(--orange); background:#fff6ef; }
 
 .category-workspace { min-width:0; }
@@ -274,11 +274,10 @@ body.modal-open { overflow: hidden; }
 .delete-category svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
 .category-card:hover .delete-category { opacity:1; }
 .delete-category:hover { background:#fff0f0; color:var(--red); }
-.expand-category { height:42px; min-width:47px; display:flex; align-items:center; justify-content:center; gap:7px; padding:0 9px; border-radius:10px; }
-.expand-category:hover { background:#f4f4f5; color:#333; }
-.expand-category span { min-width:17px; height:17px; display:grid; place-items:center; padding:0 4px; border-radius:10px; background:#f0f0f2; font-size:9px; font-weight:800; }
-.expand-category i { display:block; font-style:normal; font-size:20px; line-height:1; transition:transform .2s; }
-.category-card.expanded .expand-category i { transform:rotate(180deg); }
+.expand-category { width:34px; height:34px; min-width:34px; display:grid; place-items:center; padding:0; margin-left:5px; border:1px solid #e5e5e8; border-radius:50%; background:#f7f7f8; box-shadow:0 2px 7px rgba(20,20,24,.05); transition:.2s ease; }
+.expand-category:hover { background:#fff; border-color:#d2d2d6; color:#111; box-shadow:0 5px 14px rgba(20,20,24,.1); transform:translateY(-1px); }
+.expand-category svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; transition:transform .24s cubic-bezier(.4,0,.2,1); }
+.category-card.expanded .expand-category svg { transform:rotate(180deg); }
 
 .market-table { min-width:870px; border-top:1px solid #ebebed; background:#fcfcfd; }
 .market-table-head,.market-data-row { display:grid; grid-template-columns:minmax(104px,.9fr) minmax(102px,.85fr) minmax(92px,.8fr) minmax(96px,.8fr) minmax(96px,.8fr) minmax(95px,.8fr) minmax(92px,.8fr) minmax(72px,.65fr) minmax(64px,.55fr); gap:9px; align-items:center; }
@@ -301,6 +300,9 @@ body.modal-open { overflow: hidden; }
 .calculated-cell b,.calculated-cell small,.profit-cell b,.profit-cell small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .calculated-cell b,.profit-cell b { color:#444449; font-size:11px; }
 .calculated-cell small,.profit-cell small { margin-top:3px; color:#aaa; font-size:8px; }
+.cell-editor { width:100%; padding:6px 8px; border:1px solid transparent; border-radius:9px; background:transparent; text-align:left; transition:.18s ease; }
+.cell-editor:hover { border-color:#ffd2b2; background:#fff7f0; }
+.cell-editor:focus-visible { outline:0; border-color:#ffad70; box-shadow:0 0 0 3px #fff0e5; }
 .profit-cell.positive b,.rate-cell.positive b { color:var(--green); }
 .profit-cell.negative b,.rate-cell.negative b { color:var(--red); }
 .rate-cell b { font-size:13px; }
@@ -310,7 +312,9 @@ body.modal-open { overflow: hidden; }
 .no-market-row { padding:17px; border-top:1px solid var(--line); color:#aaa; background:#fafafa; text-align:center; font-size:11px; }
 .empty-categories { padding:70px 20px; border:1px dashed #d7d7db; border-radius:14px; color:#777; text-align:center; background:#fff; }
 .empty-category-icon { width:42px; height:42px; display:grid; place-items:center; margin:0 auto 12px; border-radius:13px; color:var(--orange); background:var(--orange-soft); font-size:24px; }
-.empty-categories p { margin:5px 0 0; color:#aaa; font-size:11px; }
+.empty-categories b { font-size:17px; }
+.empty-categories p { margin:7px 0 17px; color:#888; font-size:13px; }
+.empty-add-button { height:40px; font-size:13px; }
 
 .modal-backdrop { position:fixed; inset:0; z-index:100; display:grid; place-items:center; padding:20px; background:rgba(18,18,20,.46); backdrop-filter:blur(5px); }
 .compact-modal { width:min(540px,100%); max-height:calc(100vh - 40px); overflow:auto; border:1px solid rgba(255,255,255,.6); border-radius:18px; background:#fff; box-shadow:0 30px 80px rgba(0,0,0,.22); }
@@ -339,6 +343,29 @@ body.modal-open { overflow: hidden; }
 .listing-modal-card .tariff-query-grid input,.listing-modal-card .tariff-query-grid select { height:37px; font-size:10px; }
 .listing-modal-card .tariff-query-grid .match-button { min-height:37px; }
 .listing-modal-card .tariff-lookup-result { max-height:190px; overflow:auto; }
+.freight-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:15px; }
+.freight-detail-grid>div { padding:12px 13px; border:1px solid #ececef; border-radius:11px; background:#fafafa; }
+.freight-detail-grid small,.freight-detail-grid b { display:block; }
+.freight-detail-grid small { margin-bottom:5px; color:#999; font-size:11px; }
+.freight-detail-grid b { color:#303035; font-size:13px; }
+.freight-rate-form { padding-bottom:0!important; }
+
+/* Readability scale */
+.category-list-head b { font-size:16px; }
+.category-list-head span,.category-list-head small { font-size:12px; }
+.category-info small,.category-sites>small,.market-table-head { font-size:11px; }
+.category-info b { font-size:14px; }
+.category-name b { font-size:16px; }
+.site-toggle { min-width:34px; height:28px; font-size:11px; }
+.market-country b,.table-input input,.calculated-cell b,.profit-cell b { font-size:13px; }
+.market-country small,.calculated-cell small,.profit-cell small { font-size:10px; }
+.table-input { height:38px; }
+.rate-cell b { font-size:15px; }
+.listing-settings { min-width:42px; height:33px; font-size:11px; }
+.modal-section-title b { font-size:15px; }
+.modal-section-title small,.field>span,.match-result,.dimension-paste-hint,.tariff-lookup-result { font-size:11px; }
+.compact-form .field input,.compact-form .field select { font-size:14px; }
+.modal-actions button { font-size:13px; }
 
 @media (max-width: 1280px) {
   .category-main-row { grid-template-columns:minmax(460px,1fr) minmax(210px,.55fr) auto; }
