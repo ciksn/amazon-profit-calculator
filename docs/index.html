@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MarginGo · 亚马逊多国利润率</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./ui-fixes.css">
+  <link rel="stylesheet" href="./admin.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">M</span><span><b>MarginGo</b><small>全球利润工作台</small></span></div>
+      <nav>
+        <button class="nav-item active" data-view="calculator"><span>⌁</span>利润计算</button>
+        <button class="nav-item disabled temporarily-hidden" hidden aria-hidden="true"><span>▦</span>产品数据看板<em>下一步</em></button>
+        <button class="nav-item" data-view="admin"><span>⚙</span>规则管理</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="status-dot"></div>
+        <div><b>数据自动保存</b><small>规则更新后自动重算</small></div>
+      </div>
+    </aside>
+
+    <main>
+      <section id="calculatorView" class="view">
+        <div class="page-head">
+          <div><p class="eyebrow">GLOBAL PROFIT CALCULATOR</p><h1>多国利润，一次算清</h1><p>产品数据只填一次，澳洲优先展示，其余站点并行测算。</p></div>
+        </div>
+
+        <div class="project-bar"><div class="project-tabs" id="projectTabs"></div><div class="project-actions"><button class="project-add-button" id="addProjectBtn" type="button"><span>＋</span> 新增品类</button><button class="more-button" id="projectMenuBtn" type="button" title="删除当前品类" aria-label="删除当前品类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button></div></div>
+
+        <div class="calculator-grid">
+          <div class="left-column">
+            <section class="card shared-card">
+              <div class="card-head"><div><span class="step">01</span><div><h2>产品基础数据</h2><p>一次录入，全部国家共用</p></div></div><span class="save-state" id="saveState">已保存</span></div>
+              <div class="form-grid">
+                <label class="field span-2"><span>品类 / 产品名称</span><input id="projectName" data-project="name" placeholder="例如：浴室置物架"></label>
+                <label class="field"><span>产品成本</span><div class="input-affix"><b>¥</b><input id="costCny" data-project="cost_cny" type="number" min="0" step="0.01"><em>CNY</em></div></label>
+                <label class="field"><span>尺寸单位</span><select id="dimensionUnit" data-project="dimension_unit"><option value="cm">厘米 cm</option><option value="ft">英尺 ft</option></select></label>
+                <div class="field span-2 dimension-field"><div class="field-label-row"><span>产品尺寸（长 × 宽 × 高）</span><button class="clipboard-dimension-button" id="readDimensionsBtn" type="button" title="读取剪贴板中的完整尺寸">识别剪贴板</button></div><div class="dimension-row"><input id="length" data-project="length" data-dimension-input type="number" min="0" step="0.01" aria-label="产品长度"><i>×</i><input id="width" data-project="width" data-dimension-input type="number" min="0" step="0.01" aria-label="产品宽度"><i>×</i><input id="height" data-project="height" data-dimension-input type="number" min="0" step="0.01" aria-label="产品高度"><em id="dimensionSuffix">cm</em></div><small class="dimension-paste-hint" id="dimensionPasteHint">支持数字三连或 D × W × H 格式；也可在任一尺寸框直接粘贴</small></div>
+                <label class="field"><span>产品重量</span><div class="input-affix"><input id="weight" data-project="weight" type="number" min="0" step="0.001"><select id="weightUnit" data-project="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
+              </div>
+            </section>
+
+            <section class="card country-card">
+              <div class="card-head"><div><span class="step">02</span><div><h2>选择计算站点</h2><p>澳洲默认勾选并始终优先</p></div></div><span class="selected-count" id="selectedCount">1 个站点</span></div>
+              <div class="country-selector" id="countrySelector"></div>
+            </section>
+
+            <section class="card listing-card">
+              <div class="card-head"><div><span class="step">03</span><div><h2>站点售价与佣金</h2><p>粘贴父品类即可自动匹配佣金</p></div></div></div>
+              <div class="country-tabs" id="countryTabs"></div>
+              <div id="listingEditor"></div>
+            </section>
+          </div>
+
+          <aside class="result-panel" id="resultPanel"><div class="empty-result"><div class="spinner"></div><p>正在计算利润…</p></div></aside>
+        </div>
+
+        <section class="comparison-section">
+          <div class="section-title"><div><p class="eyebrow">MARKET COMPARISON</p><h2>已选站点利润对比</h2></div><span>澳洲始终置顶</span></div>
+          <div class="comparison-grid" id="comparisonGrid"></div>
+        </section>
+      </section>
+
+      <section id="adminView" class="view hidden">
+        <div class="page-head"><div><p class="eyebrow">RULE CENTER</p><h1>后台规则管理</h1><p>修改后立即用于所有品类的下一次计算。</p></div><button class="secondary-button" data-go-calculator>← 返回利润计算</button></div>
+        <div class="admin-summary" id="adminSummary"></div>
+        <div class="admin-tabs">
+          <button class="active" data-rule-tab="countries">税费 / VAT / 汇率</button>
+          <button data-rule-tab="freight">货代价格</button>
+          <button data-rule-tab="sizes">尺寸分段</button>
+          <button data-rule-tab="fba">FBA 规则</button>
+          <button data-rule-tab="commission">品类佣金</button>
+        </div>
+        <section class="card admin-card"><div class="admin-toolbar"><div><h2 id="adminTitle">税率与汇率</h2><p id="adminDescription">汇率为 1 单位当地货币对应的人民币金额。</p></div><div class="admin-filter"><select id="adminCountryFilter"><option value="">全部国家</option></select><input id="adminSearch" placeholder="搜索规则…"></div></div><div class="table-wrap" id="adminTable"></div></section>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="./config.js"></script>
+  <script src="./profit-engine.js"></script>
+  <script src="./static-api.js"></script>
+  <script src="./dimensions.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "amazon-global-margin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "亚马逊多国利润率计算工具",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "build:pages": "node scripts/build_github_pages.mjs",
+    "update:japan-tariff": "node scripts/update_japan_tariff.mjs",
+    "test": "node --test",
+    "test:coverage": "node --experimental-test-coverage --test --test-coverage-include=lib/profit.js --test-coverage-include=server.js --test-coverage-lines=95 --test-coverage-branches=90 --test-coverage-functions=95"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
