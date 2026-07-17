@@ -143,7 +143,7 @@
     }
     if (method === 'POST' && path === '/api/projects') {
       const body = readBody(options); const now = new Date().toISOString(); const id = local.nextProjectId++;
-      const project = { id,name:body.name || '未命名品类',cost_cny:0,length:0,width:0,height:0,dimension_unit:'cm',weight:0,weight_unit:'kg',created_at:now,updated_at:now };
+      const project = { id,name:body.name || '未命名品类',cost_cny:0,length:0,width:0,height:0,dimension_unit:'cm',weight:0,weight_unit:'kg',image_data:'',created_at:now,updated_at:now };
       local.projects.push(project); for (const country of await countries()) local.listings[`${id}:${country.code}`] = blankListing(id,country);
       save(); return json(201,await getProject(id));
     }

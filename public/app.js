@@ -6,6 +6,7 @@ const state = {
   resultsByProject:{},
   expanded:new Set(),
   editingProjectId:null,
+  editingProjectImage:'',
   editingListing:null,
   view:'calculator',
   ruleTab:'countries',
@@ -133,6 +134,9 @@ function categoryCard(project,index) {
   const expanded = state.expanded.has(project.id);
   const dimensions = `${formatNumber(project.length)} × ${formatNumber(project.width)} × ${formatNumber(project.height)} ${String(project.dimension_unit || 'cm').toUpperCase()}`;
   const weight = `${formatNumber(project.weight,3)} ${String(project.weight_unit || 'kg').toUpperCase()}`;
+  const productImage = project.image_data
+    ? `<img src="${escapeHtml(project.image_data)}" alt="${escapeHtml(project.name || '商品')}图片">`
+    : '<span aria-hidden="true">▧</span>';
   const siteButtons = state.bootstrap.countries.map((country) => {
     const listing = project.listings.find((item) => item.country_code === country.code);
     return `<button class="site-toggle ${listing?.selected ? 'active':''}" type="button" data-toggle-site="${country.code}" data-project-id="${project.id}" aria-pressed="${Boolean(listing?.selected)}" title="${listing?.selected ? '移除' : '加入'}${country.name}站">${marketCode(country.code)}</button>`;
@@ -141,6 +145,7 @@ function categoryCard(project,index) {
     <div class="category-main-row">
       <button class="category-info" type="button" data-edit-project="${project.id}" aria-label="编辑 ${escapeHtml(project.name)}">
         <span class="category-index">${String(index + 1).padStart(2,'0')}</span>
+        <span class="category-image">${productImage}</span>
         <span class="category-name"><small>品名</small><b>${escapeHtml(project.name || '未命名品类')}</b></span>
         <span class="category-metric"><small>成本</small><b>¥${formatNumber(project.cost_cny)}</b></span>
         <span class="category-metric category-size"><small>长 × 宽 × 高</small><b>${escapeHtml(dimensions)}</b></span>
@@ -240,10 +245,12 @@ function openProductModal(projectId) {
   const project = findProject(projectId);
   if (!project) return;
   state.editingProjectId = project.id;
+  state.editingProjectImage = project.image_data || '';
   $('#productModalTitle').textContent = `编辑 · ${project.name}`;
   const form = $('#productForm');
   for (const key of ['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit']) formField(form,key).value = project[key] ?? '';
   $('#dimensionSuffix').textContent = project.dimension_unit || 'cm';
+  renderProductImagePreview();
   openModal($('#productModal'));
   setTimeout(() => formField(form,'name').focus(),60);
 }
@@ -254,6 +261,7 @@ async function saveProductForm(event) {
   const changes = {};
   for (const key of ['name','dimension_unit','weight_unit']) changes[key] = formField(form,key).value.trim();
   for (const key of ['cost_cny','length','width','height','weight']) changes[key] = Number(formField(form,key).value) || 0;
+  changes.image_data = state.editingProjectImage || '';
   if (!changes.name) return toast('请填写品名');
   try {
     setSaveState('保存中…');
@@ -264,6 +272,59 @@ async function saveProductForm(event) {
     await calculateProject(updated.id);
     setSaveState('已保存'); toast('品类信息已更新');
   } catch (error) { setSaveState('保存失败',true); toast(error.message); }
+}
+
+function renderProductImagePreview() {
+  const preview = $('#productImagePreview');
+  preview.innerHTML = state.editingProjectImage
+    ? `<img src="${escapeHtml(state.editingProjectImage)}" alt="商品图片预览">`
+    : '<span>图片</span>';
+  $('#removeProductImage').classList.toggle('hidden',!state.editingProjectImage);
+  $('#productImageInput').classList.toggle('has-image',Boolean(state.editingProjectImage));
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve,reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('图片读取失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function compressProductImage(file) {
+  if (!file?.type?.startsWith('image/')) throw new Error('请选择图片文件');
+  if (file.size > 12 * 1024 * 1024) throw new Error('图片不能超过 12MB');
+  const source = await readFileAsDataUrl(file);
+  const image = await new Promise((resolve,reject) => {
+    const element = new Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error('图片格式无法识别'));
+    element.src = source;
+  });
+  const maxSide = 640;
+  const scale = Math.min(1,maxSide / Math.max(image.naturalWidth,image.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1,Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1,Math.round(image.naturalHeight * scale));
+  canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);
+  return canvas.toDataURL('image/webp',.82);
+}
+
+async function setProductImage(file) {
+  try {
+    state.editingProjectImage = await compressProductImage(file);
+    renderProductImagePreview();
+    toast('图片已加入，保存品类后生效');
+  } catch (error) { toast(error.message); }
+}
+
+function handleProductImagePaste(event) {
+  if ($('#productModal').classList.contains('hidden')) return;
+  const imageItem = [...(event.clipboardData?.items || [])].find((item) => item.type.startsWith('image/'));
+  if (!imageItem) return;
+  event.preventDefault();
+  setProductImage(imageItem.getAsFile());
 }
 
 function fillParsedDimensions(parsed) {
@@ -497,8 +558,14 @@ function switchView(view) {
 $('#addProjectBtn').onclick = addProject;
 $('#productForm').onsubmit = saveProductForm;
 $('#readDimensionsBtn').onclick = readDimensionsFromClipboard;
+$('#selectProductImage').onclick = () => $('#productImageFile').click();
+$('#productImageFile').onchange = (event) => { const [file] = event.target.files; if (file) setProductImage(file); event.target.value = ''; };
+$('#removeProductImage').onclick = () => { state.editingProjectImage = ''; renderProductImagePreview(); };
+$('#productImageInput').onclick = (event) => { if (!event.target.closest('button')) $('#productImageFile').click(); };
+$('#productImageInput').onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('#productImageFile').click(); } };
 formField($('#productForm'),'dimension_unit').onchange = (event) => { $('#dimensionSuffix').textContent = event.target.value; };
 $$('[data-modal-dimension]').forEach((input) => input.addEventListener('paste',handleDimensionPaste));
+document.addEventListener('paste',handleProductImagePaste);
 $$('[data-close-modal]').forEach((button) => button.onclick = () => closeModal(button.closest('.modal-backdrop')));
 $$('.modal-backdrop').forEach((modal) => modal.addEventListener('mousedown',(event) => { if (event.target === modal) closeModal(modal); }));
 document.addEventListener('keydown',(event) => { if (event.key === 'Escape') $$('.modal-backdrop:not(.hidden)').forEach(closeModal); });

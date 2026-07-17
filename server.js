@@ -121,7 +121,7 @@ async function api(req, res, url) {
   if (projectMatch && method === 'PUT') {
     const id = Number(projectMatch[1]);
     const body = await readBody(req);
-    const allowed = ['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit'];
+    const allowed = ['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit','image_data'];
     const fields = allowed.filter((key) => Object.hasOwn(body,key));
     if (fields.length) db.prepare(`UPDATE projects SET ${fields.map((key) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
       .run(...fields.map((key) => body[key]),new Date().toISOString(),id);

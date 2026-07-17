@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MarginGo · 亚马逊多国利润率</title>
   <link rel="stylesheet" href="./styles.css">
-  <link rel="stylesheet" href="./ui-fixes.css?v=20260717-3">
+  <link rel="stylesheet" href="./ui-fixes.css?v=20260717-4">
   <link rel="stylesheet" href="./admin.css">
 </head>
 <body>
@@ -65,6 +65,7 @@
       <form id="productForm" class="compact-form">
         <label class="field"><span>品名</span><input id="modalProjectName" name="name" maxlength="20" placeholder="例如：浴室置物架"></label>
         <label class="field"><span>成本</span><div class="input-affix"><b>¥</b><input name="cost_cny" type="number" min="0" step="0.01"><em>CNY</em></div></label>
+        <div class="field span-2 product-image-field"><span>商品图片</span><div class="product-image-input" id="productImageInput" tabindex="0"><div class="product-image-preview" id="productImagePreview"><span>图片</span></div><div class="product-image-copy"><b>上传或粘贴图片</b><small>点击选择图片，也可以复制图片后按 Ctrl+V</small><div><button class="secondary-button image-select-button" id="selectProductImage" type="button">选择图片</button><button class="image-remove-button hidden" id="removeProductImage" type="button">移除</button></div></div><input id="productImageFile" type="file" accept="image/*" hidden></div></div>
         <label class="field"><span>尺寸单位</span><select name="dimension_unit"><option value="cm">厘米 cm</option><option value="ft">英尺 ft</option></select></label>
         <label class="field weight-field"><span>重量</span><div class="input-affix"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
         <div class="field span-2 dimension-field"><div class="field-label-row"><span>长 × 宽 × 高</span><button class="clipboard-dimension-button" id="readDimensionsBtn" type="button">识别剪贴板</button></div><div class="dimension-row"><input name="length" data-modal-dimension type="number" min="0" step="0.01" aria-label="产品长度"><i>×</i><input name="width" data-modal-dimension type="number" min="0" step="0.01" aria-label="产品宽度"><i>×</i><input name="height" data-modal-dimension type="number" min="0" step="0.01" aria-label="产品高度"><em id="dimensionSuffix">cm</em></div><small class="dimension-paste-hint">支持 27.2 × 12.5 × 54 cm；也可直接粘贴到任一尺寸框</small></div>
@@ -82,6 +83,6 @@
   <div class="toast" id="toast"></div>
   <script src="./config.js"></script>
   <script src="./dimensions.js"></script>
-  <script src="./app.js?v=20260717-3"></script>
+  <script src="./app.js?v=20260717-4"></script>
 </body>
 </html>

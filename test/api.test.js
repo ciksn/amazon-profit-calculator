@@ -64,9 +64,10 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
   assert.equal(createdResponse.status,201);
   const created=await createdResponse.json();
   try {
-    const updated=await (await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'已更新临时项目',weight:2})})).json();
+    const updated=await (await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'已更新临时项目',weight:2,image_data:'data:image/png;base64,dGVzdA=='})})).json();
     assert.equal(updated.name,'已更新临时项目');
     assert.equal(updated.weight,2);
+    assert.equal(updated.image_data,'data:image/png;base64,dGVzdA==');
     const listingUpdate=await (await fetch(`${base}/api/projects/${created.id}/countries/JP`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({selected:true,sale_price:7000,category_text:'Unknown Category',customs_rate:5})})).json();
     assert.equal(listingUpdate.listings.find((row)=>row.country_code==='JP').matched_referral_rate,15.4);
     const calculated=await (await fetch(`${base}/api/calculate`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({project_id:created.id})})).json();
