@@ -87,7 +87,7 @@
 
   function normalizeHs(value) {
     const digits = String(value || '').replace(/\D/g,'');
-    if (![6,9].includes(digits.length)) throw new Error('请输入 6 位或 9 位日本 HS 编码');
+    if (![6,9,10].includes(digits.length)) throw new Error('请输入国内 10 位 HS 编码');
     const chapter = Number(digits.slice(0,2));
     if (chapter < 1 || chapter > 97 || chapter === 77) throw new Error('HS 编码章节无效');
     return digits;
@@ -119,17 +119,18 @@
       if (!result.ok) throw new Error(`日本税则第 ${chapter} 章尚未同步`);
       rows = await result.json(); cache.tariff.set(chapter,rows);
     }
-    let matches = rows.filter((row) => normalized.length === 9 ? row.code === normalized : row.hs6 === normalized);
-    if (normalized.length === 6 && matches.some((row) => row.statisticalCode)) matches = matches.filter((row) => row.statisticalCode);
+    const matchingHs6 = normalized.slice(0,6);
+    let matches = rows.filter((row) => normalized.length === 9 ? row.code === normalized : row.hs6 === matchingHs6);
+    if (normalized.length !== 9 && matches.some((row) => row.statisticalCode)) matches = matches.filter((row) => row.statisticalCode);
     matches = matches.filter((row,index,array) => array.findIndex((item) => item.code === row.code) === index);
-    if (!matches.length) throw new Error('官方税则中未找到该编码，请确认是否为日本进口 HS 编码');
+    if (!matches.length) throw new Error('日本官方税则中未找到该国内编码前 6 位对应的税目');
     const candidates = matches.map((row) => {
       const rate = chooseTariff(row,preference === 'unknown' ? 'none' : preference);
       return { code:row.code,description:row.description,rate:rate.percent,rateText:rate.text,rateType:rate.type,
         warning:rate.warning || (preference === 'unknown' ? '优惠资格未知，暂按非优惠税率建议' : '') };
     });
     const candidate = candidates.length === 1 && candidates[0].rate != null ? candidates[0] : null;
-    return { status:candidate ? 'matched':'needs_confirmation',inputCode:normalized,originCountry:'CN',preference,
+    return { status:candidate ? 'matched':'needs_confirmation',inputCode:normalized,matchingHs6,originCountry:'CN',preference,
       scheduleDate:manifest.scheduleDate,sourceUrl:`${manifest.sourceRoot}/data/e_${chapter}.htm`,referenceOnly:true,candidate,candidates };
   }
 

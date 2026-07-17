@@ -4,9 +4,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { normalizeHsCode,parseRate,parseRows,chooseRate } = require('../lib/japan-tariff');
 
-test('日本 HS 编码仅接受 6 位或 9 位有效章节', () => {
+test('关税查询接受国内 10 位编码，并兼容内部使用的日本 6/9 位编码', () => {
   assert.equal(normalizeHsCode('8543.70-000'),'854370000');
   assert.equal(normalizeHsCode('854370'),'854370');
+  assert.equal(normalizeHsCode('8543709999'),'8543709999');
   assert.throws(() => normalizeHsCode('8543'));
   assert.throws(() => normalizeHsCode('770000'));
 });

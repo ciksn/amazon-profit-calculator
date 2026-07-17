@@ -171,7 +171,7 @@ function renderListingEditor() {
     <div class="field span-2 japan-tariff-lookup">
       <span>日本进口关税查询</span>
       <div class="tariff-query-grid">
-        <input id="customsHsCode" inputmode="numeric" value="${escapeHtml(listing.customs_hs_code)}" placeholder="输入6位或9位日本HS编码">
+        <input id="customsHsCode" inputmode="numeric" maxlength="10" value="${escapeHtml(listing.customs_hs_code)}" placeholder="输入国内10位HS编码">
         <select id="customsOriginCountry"><option value="CN">中国原产</option></select>
         <select id="customsPreference">
           <option value="unknown" ${listing.customs_preference === 'unknown' ? 'selected':''}>RCEP资格未知</option>
@@ -180,7 +180,7 @@ function renderListingEditor() {
         </select>
         <button class="match-button" id="lookupJapanTariff" type="button">查询最新税率</button>
       </div>
-      <div class="tariff-lookup-result" id="tariffLookupResult">${listing.customs_schedule_date ? `当前：${escapeHtml(listing.customs_rate_type || '人工填写')} ${Number(listing.customs_rate) || 0}% · 税则 ${escapeHtml(listing.customs_schedule_date)}` : '数据来自日本海关；查询失败时仍可手动填写关税比例'}</div>
+      <div class="tariff-lookup-result" id="tariffLookupResult">${listing.customs_schedule_date ? `当前：${escapeHtml(listing.customs_rate_type || '人工填写')} ${Number(listing.customs_rate) || 0}% · 税则 ${escapeHtml(listing.customs_schedule_date)}` : '国内编码按前6位匹配日本税则；查询失败时仍可手动填写关税比例'}</div>
     </div>
     <label class="field"><span>申报比例（留空申报价时使用）</span><div class="input-affix"><input id="declarationRatio" type="number" min="0" max="100" step="0.1" value="${Number(listing.declaration_ratio ?? 0.15) * 100}"><em>%</em></div></label>
     <label class="field"><span>申报价（可覆盖自动值）</span><div class="input-affix"><b>${listing.symbol}</b><input id="declaredValue" type="number" min="0" step="0.01" value="${listing.declared_value_override ?? ''}" placeholder="自动：${autoDeclaredValue.toFixed(2)}"><em>${listing.currency}</em></div></label>
@@ -212,15 +212,16 @@ function renderListingEditor() {
 function renderTariffCandidates(payload) {
   const result = $('#tariffLookupResult');
   const candidates = payload.candidates || [];
-  result.innerHTML = `<b>需要确认日本细分编码</b><small>税则日期 ${escapeHtml(payload.scheduleDate)}，请选择与商品相符的描述</small><div class="tariff-candidates">${candidates.map((candidate) => `<button type="button" data-tariff-code="${candidate.code}"><b>${escapeHtml(candidate.code)}</b><span>${escapeHtml(candidate.description || '无英文描述')}</span><em>${escapeHtml(candidate.rateText || '需人工确认')}</em></button>`).join('')}</div>`;
+  result.innerHTML = `<b>已按国内编码前6位 ${escapeHtml(payload.matchingHs6)} 匹配</b><small>中国与日本后缀不通用，请选择与商品相符的日本细分项 · 税则 ${escapeHtml(payload.scheduleDate)}</small><div class="tariff-candidates">${candidates.map((candidate) => `<button type="button" data-tariff-code="${candidate.code}"><b>${escapeHtml(candidate.code)}</b><span>${escapeHtml(candidate.description || '无英文描述')}</span><em>${escapeHtml(candidate.rateText || '需人工确认')}</em></button>`).join('')}</div>`;
   $$('[data-tariff-code]',result).forEach((button) => button.onclick = () => lookupJapanTariff(button.dataset.tariffCode));
 }
 
 async function lookupJapanTariff(selectedCode = '') {
   const button = $('#lookupJapanTariff');
-  const hsCode = selectedCode || $('#customsHsCode').value;
+  const domesticHsCode = $('#customsHsCode').value.replace(/\D/g,'');
+  const hsCode = selectedCode || domesticHsCode;
   const preference = $('#customsPreference').value;
-  if (!hsCode.replace(/\D/g,'')) return toast('请先输入日本 HS 编码');
+  if (!selectedCode && domesticHsCode.length !== 10) return toast('请输入国内 10 位 HS 编码');
   button.disabled = true;
   button.textContent = '查询中…';
   $('#tariffLookupResult').textContent = '正在读取日本海关最新税则…';
@@ -229,7 +230,7 @@ async function lookupJapanTariff(selectedCode = '') {
     if (!payload.candidate) return renderTariffCandidates(payload);
     const candidate = payload.candidate;
     const changes = {
-      customs_hs_code:candidate.code,
+      customs_hs_code:domesticHsCode,
       customs_origin_country:'CN',
       customs_preference:preference,
       customs_rate:candidate.rate,
@@ -241,7 +242,7 @@ async function lookupJapanTariff(selectedCode = '') {
     renderListingEditor();
     await calculate();
     const result = $('#tariffLookupResult');
-    result.innerHTML = `<b>已采用 ${escapeHtml(candidate.rateType)}：${candidate.rate}%</b><small>${escapeHtml(candidate.code)} · ${escapeHtml(candidate.description)} · 税则 ${escapeHtml(payload.scheduleDate)}${candidate.warning ? ` · ${escapeHtml(candidate.warning)}` : ''}</small><a href="${escapeHtml(payload.sourceUrl)}" target="_blank" rel="noopener">查看日本海关来源</a>`;
+    result.innerHTML = `<b>已采用 ${escapeHtml(candidate.rateType)}：${candidate.rate}%</b><small>国内 ${escapeHtml(domesticHsCode)} → 日本 ${escapeHtml(candidate.code)} · ${escapeHtml(candidate.description)} · 税则 ${escapeHtml(payload.scheduleDate)}${candidate.warning ? ` · ${escapeHtml(candidate.warning)}` : ''}</small><a href="${escapeHtml(payload.sourceUrl)}" target="_blank" rel="noopener">查看日本海关来源</a>`;
     toast('已填入最新关税比例并重新计算');
   } catch (error) {
     $('#tariffLookupResult').textContent = `${error.message}；可继续手动填写关税比例`;
