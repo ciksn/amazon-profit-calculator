@@ -129,9 +129,17 @@ async function writeTableRows(rows,linkIndex=-1) {
   const text = rows.map((row) => row.join('\t')).join('\n');
   const html = `<table><tbody>${rows.map((row) => `<tr>${row.map((item,index) => index === linkIndex
     ? `<td><a href="${escapeHtml(item)}">调整</a></td>` : `<td>${escapeHtml(item)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-  if (globalThis.ClipboardItem && navigator.clipboard?.write) {
-    await navigator.clipboard.write([new ClipboardItem({ 'text/html':new Blob([html],{ type:'text/html' }),'text/plain':new Blob([text],{ type:'text/plain' }) })]);
-  } else await navigator.clipboard.writeText(text);
+  try {
+    if (globalThis.ClipboardItem && navigator.clipboard?.write) {
+      await navigator.clipboard.write([new ClipboardItem({ 'text/html':new Blob([html],{ type:'text/html' }),'text/plain':new Blob([text],{ type:'text/plain' }) })]); return;
+    }
+  } catch {}
+  const holder = document.createElement('div'); holder.contentEditable = 'true'; holder.setAttribute('aria-hidden','true');
+  holder.style.cssText = 'position:fixed;left:-10000px;top:0;opacity:.01;pointer-events:none'; holder.innerHTML = html; document.body.append(holder);
+  const selection = getSelection(); const range = document.createRange(); range.selectNode(holder.firstElementChild); selection.removeAllRanges(); selection.addRange(range);
+  const copiedAsTable = document.execCommand('copy'); selection.removeAllRanges(); holder.remove();
+  if (copiedAsTable) return;
+  const helper = document.createElement('textarea'); helper.value = text; helper.style.cssText = 'position:fixed;opacity:0'; document.body.append(helper); helper.select(); document.execCommand('copy'); helper.remove();
 }
 async function flushProjectPrices(project) {
   for (const input of $$(`[data-project-id="${project.id}"][data-listing-input="sale_price"]`)) {
@@ -143,16 +151,18 @@ async function flushProjectPrices(project) {
   await calculateProject(project.id,false); return findProject(project.id);
 }
 async function copyProductResults(projectId) {
-  let project = await flushProjectPrices(findProject(projectId)); const link = projectAdjustLink(project);
+  const project = findProject(projectId); const link = projectAdjustLink(project);
   const rows = project.listings.filter((item) => item.selected).map((listing) => { const result = resultFor(project.id,listing.country_code);
-    return [project.name,`${listing.symbol}${formatNumber(listing.sale_price)}`,result ? `${formatNumber(result.profit_rate,1)}%` : '—',link]; });
-  await writeTableRows(rows,3); toast(`已复制 ${rows.length} 行产品结果`);
+    const input = $(`[data-project-id="${project.id}"][data-country-code="${listing.country_code}"][data-listing-input="sale_price"]`); const price = input?.value ?? listing.sale_price;
+    return [project.name,`${listing.symbol}${formatNumber(price)}`,result ? `${formatNumber(result.profit_rate,1)}%` : '—',link]; });
+  await writeTableRows(rows,3); toast(`已复制 ${rows.length} 行产品结果`); flushProjectPrices(project).catch((error) => toast(error.message));
 }
 async function copySiteProfitTable(projectId) {
-  const project = await flushProjectPrices(findProject(projectId));
+  const project = findProject(projectId);
   const rows = project.listings.filter((item) => item.selected).map((listing) => { const country = countryFor(listing.country_code); const result = resultFor(project.id,listing.country_code);
-    return [`${marketCode(country.code)} ${country.name}`,project.name,`${listing.symbol}${formatNumber(listing.sale_price)}`,result ? `${formatNumber(result.profit_rate,1)}%` : '—']; });
-  await writeTableRows(rows); toast(`已复制 ${rows.length} 行站点利润率`);
+    const input = $(`[data-project-id="${project.id}"][data-country-code="${listing.country_code}"][data-listing-input="sale_price"]`); const price = input?.value ?? listing.sale_price;
+    return [`${marketCode(country.code)} ${country.name}`,project.name,`${listing.symbol}${formatNumber(price)}`,result ? `${formatNumber(result.profit_rate,1)}%` : '—']; });
+  await writeTableRows(rows); toast(`已复制 ${rows.length} 行站点利润率`); flushProjectPrices(project).catch((error) => toast(error.message));
 }
 
 async function initialize() {
@@ -237,8 +247,8 @@ function categoryCard(project,index) {
       </button>
       <div class="category-sites"><small>测算站点</small><div>${siteButtons}</div></div>
       <div class="category-row-actions">
-        <button class="copy-category" type="button" data-copy-product="${project.id}" title="?????????????????">??????</button>
-        <button class="copy-category" type="button" data-copy-site-profit="${project.id}" title="???????????????">??????</button>
+        <button class="copy-category" type="button" data-copy-product="${project.id}" title="复制产品名、售价、利润率和调整链接">复制产品结果</button>
+        <button class="copy-category" type="button" data-copy-site-profit="${project.id}" title="复制站点、产品名、售价和利润率">各站点利润率</button>
         <button class="delete-category" type="button" data-delete-project="${project.id}" aria-label="删除品类" title="删除品类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button>
         <button class="edit-category" type="button" data-edit-project="${project.id}" aria-label="编辑 ${escapeHtml(project.name)}" title="编辑品类信息">编辑</button>
       </div>
