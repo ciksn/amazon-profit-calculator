@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>MarginGo · 飞书卡片版</title>
-  <link rel="stylesheet" href="./embed.css?v=20260720-1">
+  <link rel="stylesheet" href="./embed.css?v=20260720-3">
 </head>
 <body>
   <main class="embed-shell">
@@ -13,7 +13,7 @@
       <div class="head-actions">
         <label class="project-picker"><span>品类</span><select id="projectPicker" aria-label="选择品类"></select></label>
         <button class="ghost-button" id="newProjectBtn" type="button">新建</button>
-        <button class="copy-button" id="copyTableBtn" type="button">复制产品结果</button>
+        <button class="ghost-button delete-project-button" id="deleteProjectBtn" type="button">删除</button>
       </div>
     </header>
 
@@ -23,8 +23,8 @@
         <label class="field field-name"><span>品名</span><input name="name" maxlength="30" placeholder="例如：浴室置物架"></label>
         <label class="field"><span>成本（CNY）</span><input name="cost_cny" type="number" min="0" step="0.01"></label>
         <label class="field"><span>重量</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
-        <label class="field field-size"><span>长 × 宽 × 高</span><div class="dimension-inputs"><input name="length" type="number" min="0" step="0.01"><i>×</i><input name="width" type="number" min="0" step="0.01"><i>×</i><input name="height" type="number" min="0" step="0.01"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div></label>
-        <label class="field field-category"><span>亚马逊父品类</span><input name="category_text" placeholder="例如：Home &amp; Kitchen（用于匹配佣金）"></label>
+        <label class="field field-category"><span>亚马逊父品类</span><input name="category_text" placeholder="例如：Home &amp; Kitchen"></label>
+        <div class="field field-size"><div class="field-label-row"><span>长 × 宽 × 高</span><button class="clipboard-dimension-button" id="readDimensionsBtn" type="button">识别剪贴板</button></div><div class="dimension-inputs"><input name="length" data-embed-dimension type="number" min="0" step="0.01" aria-label="产品长度"><i>×</i><input name="width" data-embed-dimension type="number" min="0" step="0.01" aria-label="产品宽度"><i>×</i><input name="height" data-embed-dimension type="number" min="0" step="0.01" aria-label="产品高度"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div><small class="dimension-paste-hint">支持 27.2 × 12.5 × 54 cm；也可直接粘贴到任一尺寸框</small></div>
       </div>
     </section>
 
@@ -33,21 +33,46 @@
       <div class="site-tabs" id="siteTabs"></div>
       <div class="result-wrap">
         <table class="result-table">
-          <thead><tr><th>国家</th><th>当地售价</th><th>佣金</th><th>FBA</th><th>头程</th><th>单件利润</th><th>利润率</th></tr></thead>
+          <thead><tr><th>国家</th><th>当地售价</th><th>佣金</th><th>FBA</th><th>头程</th><th>单件利润</th><th>利润率</th><th>复制</th></tr></thead>
           <tbody id="resultRows"></tbody>
         </table>
       </div>
     </section>
 
+    <section class="competitor-panel" aria-labelledby="competitorTitle">
+      <button class="section-title competitor-toggle" id="competitorToggle" type="button" aria-expanded="true" aria-controls="competitorContent"><div><span class="step">03</span><div><b id="competitorTitle">竞品利润率计算与统计</b><small>独立选择竞品站点，成本参数可单独调整</small></div></div><span class="competitor-toggle-label">收起 <i>⌃</i></span></button>
+      <div class="competitor-content" id="competitorContent">
+        <div class="site-tabs competitor-site-tabs" id="competitorSiteTabs" aria-label="选择竞品站点"></div>
+        <div class="competitor-groups" id="competitorGroups"></div>
+        <div class="competitor-summary">
+          <div class="competitor-summary-title"><b>竞品数据统计</b><small>每个站点按录入顺序取前三条有效竞品</small></div>
+          <div class="competitor-stats" id="competitorStats"></div>
+        </div>
+      </div>
+    </section>
+
     <footer class="embed-foot">
-      <span id="copyHint">复制内容不含图片；“调整”链接打开完整计算页面</span>
+      <span id="copyHint">行末“复制”按钮可单独复制站点、售价和利润率</span>
       <a href="./index.html" target="_blank" rel="noopener">打开完整计算器 ↗</a>
     </footer>
   </main>
+  <div class="competitor-modal" id="competitorCostModal" hidden>
+    <div class="competitor-modal-backdrop" data-close-cost-modal></div>
+    <form class="competitor-modal-card" id="competitorCostForm">
+      <div class="competitor-modal-head"><div><b>竞品成本参数</b><small id="competitorCostSubtitle"></small></div><button type="button" class="modal-close" data-close-cost-modal aria-label="关闭">×</button></div>
+      <div class="cost-grid">
+        <label class="field cost-size"><span>亚马逊品类</span><input name="category_text" placeholder="例如：Home &amp; Kitchen（用于匹配佣金）"></label>
+        <label class="field"><span>采购成本（CNY）</span><input name="cost_cny" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>重量</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
+        <label class="field cost-size"><span>长 × 宽 × 高</span><div class="dimension-inputs"><input name="length" type="number" min="0" step="0.01"><i>×</i><input name="width" type="number" min="0" step="0.01"><i>×</i><input name="height" type="number" min="0" step="0.01"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div></label>
+      </div>
+      <p class="cost-tip" id="competitorDefaultsState">当前跟随产品参数；保存修改后仅影响此条竞品。</p>
+      <div class="modal-actions"><button type="button" class="ghost-button reset-defaults-button" id="resetCompetitorDefaults">恢复跟随产品</button><span class="modal-action-spacer"></span><button type="button" class="ghost-button" data-close-cost-modal>取消</button><button type="submit" class="copy-button">保存并计算</button></div>
+    </form>
+  </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="./config.js"></script>
-  <script src="./profit-engine.js"></script>
-  <script src="./static-api.js"></script>
-  <script src="./embed.js?v=20260720-1"></script>
+  <script src="./dimensions.js"></script>
+  <script src="./embed.js?v=20260720-3"></script>
 </body>
 </html>
