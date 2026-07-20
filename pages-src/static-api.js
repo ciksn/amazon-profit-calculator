@@ -4,7 +4,7 @@
   const nativeFetch = window.fetch.bind(window);
   const storageKey = 'margingo-github-pages-v1';
   const cache = { rules:null,tariff:new Map() };
-  const emptyState = () => ({ version:1,nextProjectId:1,projects:[],listings:{},overrides:{} });
+  const emptyState = () => ({ version:1,nextProjectId:1,nextCompetitorId:1,projects:[],listings:{},competitors:[],overrides:{} });
   const loadState = () => {
     try { const value = JSON.parse(localStorage.getItem(storageKey)); return value?.version === 1 ? { ...emptyState(),...value } : emptyState(); }
     catch { return emptyState(); }
@@ -85,6 +85,41 @@
     return { ...project,listings };
   }
 
+  async function calculateCompetitor(row) {
+    const project = await getProject(row.project_id); if (!project) return null;
+    const listing = project.listings.find((item) => item.country_code === row.country_code);
+    const country = (await countries()).find((item) => item.code === row.country_code);
+    if (!listing || !country) return { ...row,profit_rate:null,profit:null };
+    const follows = Boolean(row.uses_project_defaults);
+    const competitorProject = { ...project,
+      cost_cny:follows ? project.cost_cny : row.cost_cny,length:follows ? project.length : row.length,
+      width:follows ? project.width : row.width,height:follows ? project.height : row.height,
+      dimension_unit:follows ? project.dimension_unit : row.dimension_unit,
+      weight:follows ? project.weight : row.weight,weight_unit:follows ? project.weight_unit : row.weight_unit };
+    const categoryText = follows ? listing.category_text : row.category_text;
+    const competitorListing = { ...listing,sale_price:row.sale_price,category_text:categoryText };
+    if (competitorListing.referral_rate_override == null && categoryText) {
+      const matched = await matchCommission(row.country_code,categoryText,row.sale_price);
+      if (matched.matched) Object.assign(competitorListing,{ matched_category:matched.rule.parent_category,
+        matched_referral_rate:matched.rule.rate,matched_referral_threshold:matched.rule.threshold_price,
+        matched_referral_rate_above:matched.rule.rate_above,matched_referral_minimum:matched.rule.minimum_fee || 0 });
+    }
+    const fba = await rowsFor('fba'); const sizes = await rowsFor('sizes'); const freight = await rowsFor('freight');
+    const calculated = window.MarginGoProfit.calculateProfit({ project:competitorProject,country,listing:competitorListing,
+      fbaRules:fba.filter((item) => item.country_code === country.code),sizeTiers:sizes.filter((item) => item.country_code === country.code),
+      freightRule:freight.find((item) => item.country_code === country.code) || null });
+    const filled = Boolean(String(row.name || '').trim()) && Number(row.sale_price) > 0;
+    return { ...row,cost_cny:competitorProject.cost_cny,length:competitorProject.length,width:competitorProject.width,
+      height:competitorProject.height,dimension_unit:competitorProject.dimension_unit,weight:competitorProject.weight,
+      weight_unit:competitorProject.weight_unit,category_text:categoryText,symbol:country.symbol,country_name:country.name,flag:country.flag,
+      profit_rate:filled ? calculated.profit_rate : null,profit:filled ? calculated.profit : null };
+  }
+
+  async function listCompetitors(projectId) {
+    return Promise.all(local.competitors.filter((item) => Number(item.project_id) === Number(projectId))
+      .sort((a,b) => String(a.country_code).localeCompare(String(b.country_code)) || Number(a.id) - Number(b.id)).map(calculateCompetitor));
+  }
+
   function normalizeHs(value) {
     const digits = String(value || '').replace(/\D/g,'');
     if (![6,9,10].includes(digits.length)) throw new Error('请输入国内 10 位 HS 编码');
@@ -157,6 +192,7 @@
     if (projectMatch && method === 'DELETE') {
       const id = Number(projectMatch[1]); const before = local.projects.length; local.projects = local.projects.filter((item) => Number(item.id) !== id);
       for (const key of Object.keys(local.listings)) if (key.startsWith(`${id}:`)) delete local.listings[key];
+      local.competitors = local.competitors.filter((item) => Number(item.project_id) !== id);
       save(); return before === local.projects.length ? json(404,{ error:'品类不存在' }):json(200,{ ok:true });
     }
     const listingMatch = path.match(/^\/api\/projects\/(\d+)\/countries\/([A-Z]{2})$/);
@@ -164,6 +200,30 @@
       const key = `${Number(listingMatch[1])}:${listingMatch[2]}`; local.listings[key] = { ...(local.listings[key] || {}),...readBody(options) };
       const project = local.projects.find((item) => Number(item.id) === Number(listingMatch[1])); if (project) project.updated_at = new Date().toISOString();
       save(); return json(200,await getProject(listingMatch[1]));
+    }
+    const competitorListMatch = path.match(/^\/api\/projects\/(\d+)\/competitors$/);
+    if (competitorListMatch && method === 'GET') return json(200,{ competitors:await listCompetitors(competitorListMatch[1]) });
+    if (competitorListMatch && method === 'POST') {
+      const project = await getProject(competitorListMatch[1]); if (!project) return json(404,{ error:'品类不存在' });
+      const body = readBody(options); const listing = project.listings.find((item) => item.country_code === body.country_code);
+      if (!listing) return json(400,{ error:'站点不存在' });
+      const now = new Date().toISOString(); const row = { id:local.nextCompetitorId++,project_id:project.id,country_code:body.country_code,
+        name:String(body.name || ''),sale_price:Number(body.sale_price) || 0,cost_cny:project.cost_cny,length:project.length,width:project.width,
+        height:project.height,dimension_unit:project.dimension_unit,weight:project.weight,weight_unit:project.weight_unit,
+        category_text:listing.category_text,uses_project_defaults:1,created_at:now,updated_at:now };
+      local.competitors.push(row); save(); return json(201,await calculateCompetitor(row));
+    }
+    const competitorMatch = path.match(/^\/api\/competitors\/(\d+)$/);
+    if (competitorMatch && method === 'PUT') {
+      const row = local.competitors.find((item) => Number(item.id) === Number(competitorMatch[1])); if (!row) return json(404,{ error:'竞品不存在' });
+      const body = readBody(options); const parameterFields = ['cost_cny','length','width','height','dimension_unit','weight','weight_unit','category_text'];
+      if (parameterFields.some((key) => Object.hasOwn(body,key)) && !Object.hasOwn(body,'uses_project_defaults')) body.uses_project_defaults = 0;
+      Object.assign(row,body,{ uses_project_defaults:Number(Boolean(body.uses_project_defaults ?? row.uses_project_defaults)),updated_at:new Date().toISOString() });
+      save(); return json(200,await calculateCompetitor(row));
+    }
+    if (competitorMatch && method === 'DELETE') {
+      const id = Number(competitorMatch[1]); const before = local.competitors.length; local.competitors = local.competitors.filter((item) => Number(item.id) !== id);
+      save(); return before === local.competitors.length ? json(404,{ error:'竞品不存在' }):json(200,{ ok:true });
     }
     if (method === 'POST' && path === '/api/commission/match') { const body = readBody(options); return json(200,await matchCommission(body.country_code,body.text,body.sale_price)); }
     if (method === 'POST' && path === '/api/tariffs/japan/lookup') return json(200,await lookupTariff(readBody(options)));
