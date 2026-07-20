@@ -64,6 +64,47 @@ function getProject(id) {
   return project;
 }
 
+function calculateCompetitor(row) {
+  const project = getProject(Number(row.project_id));
+  if (!project) return null;
+  const listing = project.listings.find((item) => item.country_code === row.country_code);
+  const country = db.prepare('SELECT * FROM countries WHERE code = ? AND active = 1').get(row.country_code);
+  if (!listing || !country) return { ...row, profit_rate:null, profit:null };
+  const usesProjectDefaults = Boolean(row.uses_project_defaults);
+  const competitorProject = { ...project,
+    cost_cny:usesProjectDefaults ? project.cost_cny : row.cost_cny,
+    length:usesProjectDefaults ? project.length : row.length,
+    width:usesProjectDefaults ? project.width : row.width,
+    height:usesProjectDefaults ? project.height : row.height,
+    dimension_unit:usesProjectDefaults ? project.dimension_unit : row.dimension_unit,
+    weight:usesProjectDefaults ? project.weight : row.weight,
+    weight_unit:usesProjectDefaults ? project.weight_unit : row.weight_unit
+  };
+  const categoryText = usesProjectDefaults ? listing.category_text : row.category_text;
+  const competitorListing = { ...listing, sale_price:row.sale_price, category_text:categoryText };
+  if (competitorListing.referral_rate_override == null && competitorListing.category_text) {
+    const matched = matchCommission(row.country_code,competitorListing.category_text,row.sale_price);
+    if (matched.matched) Object.assign(competitorListing,{ matched_category:matched.rule.parent_category,
+      matched_referral_rate:matched.rule.rate, matched_referral_threshold:matched.rule.threshold_price,
+      matched_referral_rate_above:matched.rule.rate_above, matched_referral_minimum:matched.rule.minimum_fee || 0 });
+  }
+  const fbaRules = db.prepare('SELECT * FROM fba_rules WHERE country_code = ?').all(country.code);
+  const sizeTiers = db.prepare('SELECT * FROM size_tiers WHERE country_code = ?').all(country.code);
+  const freightRule = db.prepare('SELECT * FROM freight_rules WHERE country_code = ?').get(country.code);
+  const calculated = calculateProfit({ project:competitorProject,country,listing:competitorListing,fbaRules,sizeTiers,freightRule });
+  const filled = Boolean(String(row.name || '').trim()) && Number(row.sale_price) > 0;
+  return { ...row, cost_cny:competitorProject.cost_cny, length:competitorProject.length,
+    width:competitorProject.width, height:competitorProject.height, dimension_unit:competitorProject.dimension_unit,
+    weight:competitorProject.weight, weight_unit:competitorProject.weight_unit, category_text:categoryText,
+    symbol:country.symbol, country_name:country.name, flag:country.flag,
+    profit_rate:filled ? calculated.profit_rate : null, profit:filled ? calculated.profit : null };
+}
+
+function listCompetitors(projectId) {
+  return db.prepare('SELECT * FROM project_competitors WHERE project_id = ? ORDER BY country_code, id')
+    .all(projectId).map(calculateCompetitor);
+}
+
 function bootstrap() {
   return {
     countries: db.prepare('SELECT * FROM countries WHERE active = 1 ORDER BY priority').all(),
@@ -146,6 +187,51 @@ async function api(req, res, url) {
     }
     db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(new Date().toISOString(),Number(listingMatch[1]));
     return json(res,200,getProject(Number(listingMatch[1])));
+  }
+
+  const competitorListMatch = url.pathname.match(/^\/api\/projects\/(\d+)\/competitors$/);
+  if (competitorListMatch && method === 'GET') {
+    const projectId = Number(competitorListMatch[1]);
+    if (!getProject(projectId)) return json(res,404,{ error:'品类不存在' });
+    return json(res,200,{ competitors:listCompetitors(projectId) });
+  }
+  if (competitorListMatch && method === 'POST') {
+    const projectId = Number(competitorListMatch[1]);
+    const project = getProject(projectId);
+    if (!project) return json(res,404,{ error:'品类不存在' });
+    const body = await readBody(req);
+    const countryCode = String(body.country_code || '').toUpperCase();
+    if (!project.listings.some((item) => item.country_code === countryCode)) return json(res,400,{ error:'站点不存在' });
+    const now = new Date().toISOString();
+    const listing = project.listings.find((item) => item.country_code === countryCode);
+    const result = db.prepare(`INSERT INTO project_competitors
+      (project_id,country_code,name,sale_price,cost_cny,length,width,height,dimension_unit,weight,weight_unit,category_text,uses_project_defaults,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(projectId,countryCode,String(body.name || ''),Number(body.sale_price)||0,
+        Number(body.cost_cny ?? project.cost_cny)||0,Number(body.length ?? project.length)||0,
+        Number(body.width ?? project.width)||0,Number(body.height ?? project.height)||0,
+        body.dimension_unit || project.dimension_unit,Number(body.weight ?? project.weight)||0,
+        body.weight_unit || project.weight_unit,body.category_text ?? listing.category_text,1,now,now);
+    return json(res,201,calculateCompetitor(db.prepare('SELECT * FROM project_competitors WHERE id = ?').get(Number(result.lastInsertRowid))));
+  }
+
+  const competitorMatch = url.pathname.match(/^\/api\/competitors\/(\d+)$/);
+  if (competitorMatch && method === 'PUT') {
+    const id = Number(competitorMatch[1]);
+    const body = await readBody(req);
+    const allowed = ['country_code','name','sale_price','cost_cny','length','width','height','dimension_unit','weight','weight_unit','category_text','uses_project_defaults'];
+    const fields = allowed.filter((key) => Object.hasOwn(body,key));
+    const parameterFields = ['cost_cny','length','width','height','dimension_unit','weight','weight_unit','category_text'];
+    if (fields.some((key) => parameterFields.includes(key)) && !fields.includes('uses_project_defaults')) {
+      body.uses_project_defaults = false;fields.push('uses_project_defaults');
+    }
+    if (fields.length) db.prepare(`UPDATE project_competitors SET ${fields.map((key) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+      .run(...fields.map((key) => key === 'uses_project_defaults' ? Number(Boolean(body[key])) : body[key]),new Date().toISOString(),id);
+    const row = db.prepare('SELECT * FROM project_competitors WHERE id = ?').get(id);
+    return row ? json(res,200,calculateCompetitor(row)) : json(res,404,{ error:'竞品不存在' });
+  }
+  if (competitorMatch && method === 'DELETE') {
+    const result = db.prepare('DELETE FROM project_competitors WHERE id = ?').run(Number(competitorMatch[1]));
+    return result.changes ? json(res,200,{ ok:true }) : json(res,404,{ error:'竞品不存在' });
   }
 
   if (method === 'POST' && url.pathname === '/api/commission/match') {
