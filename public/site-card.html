@@ -4,26 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>MarginGo · 单站点利润卡片</title>
-  <link rel="stylesheet" href="./site-card.css?v=20260720-4">
+  <link rel="stylesheet" href="./site-card.css?v=20260720-8">
 </head>
 <body>
   <main class="site-shell">
     <section class="site-card">
       <header class="site-head">
-        <div class="site-identity"><span id="siteFlag">🌐</span><div><small>单站点利润测算</small><h1 id="siteName">加载中</h1></div></div>
         <label class="project-picker"><span>品类</span><select id="projectPicker" aria-label="选择品类"></select></label>
         <label class="header-price"><span>当地售价</span><div><b id="priceSymbol"></b><input name="sale_price" type="number" min="0" step="0.01" aria-label="当地售价"></div></label>
-        <div class="parameter-summary" id="parameterSummary">佣金加载中</div>
         <span class="save-state" id="saveState">已保存</span>
+        <button class="copy-button" id="copyResultBtn" type="button">复制利润率</button>
         <button class="settings-button" id="openParametersBtn" type="button">参数设置</button>
       </header>
       <div class="result-content">
-      <div class="panel-title"><div><span>01</span><div><b>本站利润结果</b><small id="resultSubtitle">完整展示核心费用与利润</small></div></div><button id="copyResultBtn" type="button">复制本站结果</button></div>
-      <div class="result-grid" id="resultGrid"></div>
-      <details class="calculation-details" open>
-        <summary>查看利润率计算过程</summary>
-        <div id="calculationRows"></div>
-      </details>
+        <div class="result-grid" id="resultGrid"></div>
       </div>
     </section>
   </main>
@@ -46,6 +40,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="./config.js"></script>
   <script src="./dimensions.js"></script>
-  <script src="./site-card.js?v=20260720-5"></script>
+  <script src="./site-card.js?v=20260720-12"></script>
 </body>
 </html>

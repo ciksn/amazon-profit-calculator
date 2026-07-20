@@ -235,8 +235,13 @@
       const listings = body.country_code ? project.listings.filter((item) => item.country_code === body.country_code) : project.listings.filter((item) => item.selected);
       const results = listings.map((listing) => {
         const country = activeCountries.find((item) => item.code === listing.country_code);
-        return window.MarginGoProfit.calculateProfit({ project,country,listing,fbaRules:fba.filter((row) => row.country_code === country.code),
-          sizeTiers:sizes.filter((row) => row.country_code === country.code),freightRule:freight.find((row) => row.country_code === country.code) || null });
+        const calculationArgs={ project,country,listing,fbaRules:fba.filter((row) => row.country_code === country.code),
+          sizeTiers:sizes.filter((row) => row.country_code === country.code),freightRule:freight.find((row) => row.country_code === country.code) || null };
+        const result=window.MarginGoProfit.calculateProfit(calculationArgs);
+        if(body.include_target_prices)result.target_prices=Object.fromEntries([0,10,20,30].map((targetRate)=>[
+          targetRate,window.MarginGoProfit.findSalePriceForProfitRate({ ...calculationArgs,targetRate })
+        ]));
+        return result;
       });
       return json(200,{ project_id:project.id,results });
     }
