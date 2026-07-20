@@ -70,11 +70,20 @@
       <div class="modal-actions"><button type="button" class="ghost-button reset-defaults-button" id="resetCompetitorDefaults">恢复跟随产品</button><span class="modal-action-spacer"></span><button type="button" class="ghost-button" data-close-cost-modal>取消</button><button type="submit" class="copy-button">保存并计算</button></div>
     </form>
   </div>
+  <div class="competitor-modal" id="projectDeleteModal" hidden>
+    <div class="competitor-modal-backdrop" data-cancel-project-delete></div>
+    <div class="competitor-modal-card project-delete-card" role="dialog" aria-modal="true" aria-labelledby="projectDeleteTitle">
+      <div class="competitor-modal-head"><div><b id="projectDeleteTitle">删除品类</b><small>删除后无法恢复</small></div><button type="button" class="modal-close" data-cancel-project-delete aria-label="关闭">×</button></div>
+      <p class="project-delete-message" id="projectDeleteMessage"></p>
+      <p class="cost-tip">该品类的站点数据和竞品数据也会一起删除。</p>
+      <div class="modal-actions"><button type="button" class="ghost-button" data-cancel-project-delete>取消</button><button type="button" class="copy-button danger-confirm-button" id="confirmProjectDelete">确认删除</button></div>
+    </div>
+  </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="./config.js"></script>
   <script src="./profit-engine.js"></script>
   <script src="./static-api.js"></script>
   <script src="./dimensions.js"></script>
-  <script src="./embed.js?v=20260720-3"></script>
+  <script src="./embed.js?v=20260720-4"></script>
 </body>
 </html>
