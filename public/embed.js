@@ -136,23 +136,20 @@ async function flushDrafts(){
 async function writeRows(rows,linkIndex=-1){
   const tsv=rows.map((row)=>row.join('\t')).join('\n');
   const html=`<table><tbody>${rows.map((row)=>`<tr>${row.map((item,index)=>index===linkIndex?`<td><a href="${escapeHtml(item)}">调整</a></td>`:`<td>${escapeHtml(item)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-  try{
-    if(globalThis.ClipboardItem&&navigator.clipboard?.write)await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([tsv],{type:'text/plain'})})]);
-    else await navigator.clipboard.writeText(tsv);
-  }catch{
-    const helper=document.createElement('textarea');helper.value=tsv;helper.style.cssText='position:fixed;opacity:0';document.body.append(helper);helper.select();document.execCommand('copy');helper.remove();
-  }
+  try{if(globalThis.ClipboardItem&&navigator.clipboard?.write){await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([tsv],{type:'text/plain'})})]);return}}catch{}
+  const holder=document.createElement('div');holder.contentEditable='true';holder.setAttribute('aria-hidden','true');holder.style.cssText='position:fixed;left:-10000px;top:0;opacity:.01;pointer-events:none';holder.innerHTML=html;document.body.append(holder);
+  const selection=getSelection();const range=document.createRange();range.selectNode(holder.firstElementChild);selection.removeAllRanges();selection.addRange(range);const copiedAsTable=document.execCommand('copy');selection.removeAllRanges();holder.remove();
+  if(copiedAsTable)return;
+  const helper=document.createElement('textarea');helper.value=tsv;helper.style.cssText='position:fixed;opacity:0';document.body.append(helper);helper.select();document.execCommand('copy');helper.remove();
 }
 async function copyTable(){
-  await flushDrafts();
   if(!state.project.listings.some((item)=>item.selected))return toast('请先选择测算站点');
-  const link=stateLink();const rows=state.project.listings.filter((item)=>item.selected).map((listing)=>{const result=resultFor(listing.country_code);return [state.project.name,`${listing.symbol}${number(listing.sale_price)}`,result?`${number(result.profit_rate,1)}%`:'—',link]});
-  await writeRows(rows,3);toast(`已复制 ${rows.length} 行产品结果`);
+  const link=stateLink();const name=formValue('name').trim()||state.project.name;const rows=state.project.listings.filter((item)=>item.selected).map((listing)=>{const result=resultFor(listing.country_code);const price=$(`[data-price="${listing.country_code}"]`)?.value??listing.sale_price;return [name,`${listing.symbol}${number(price)}`,result?`${number(result.profit_rate,1)}%`:'—',link]});
+  await writeRows(rows,3);toast(`已复制 ${rows.length} 行产品结果`);flushDrafts().catch((error)=>toast(error.message));
 }
 async function copySiteProfitTable(){
-  await flushDrafts();
-  const rows=state.project.listings.filter((item)=>item.selected).map((listing)=>{const country=state.bootstrap.countries.find((item)=>item.code===listing.country_code);const result=resultFor(listing.country_code);return [`${marketCode(country.code)} ${country.name}`,state.project.name,`${listing.symbol}${number(listing.sale_price)}`,result?`${number(result.profit_rate,1)}%`:'—']});
-  await writeRows(rows);toast(`已复制 ${rows.length} 行站点利润率`);
+  const name=formValue('name').trim()||state.project.name;const rows=state.project.listings.filter((item)=>item.selected).map((listing)=>{const country=state.bootstrap.countries.find((item)=>item.code===listing.country_code);const result=resultFor(listing.country_code);const price=$(`[data-price="${listing.country_code}"]`)?.value??listing.sale_price;return [`${marketCode(country.code)} ${country.name}`,name,`${listing.symbol}${number(price)}`,result?`${number(result.profit_rate,1)}%`:'—']});
+  await writeRows(rows);toast(`已复制 ${rows.length} 行站点利润率`);flushDrafts().catch((error)=>toast(error.message));
 }
 
 function bindEvents(){
