@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>MarginGo · 飞书卡片版</title>
+  <link rel="stylesheet" href="./embed.css?v=20260720-1">
+</head>
+<body>
+  <main class="embed-shell">
+    <header class="embed-head">
+      <div class="brand"><span>M</span><div><b>MarginGo</b><small>飞书选品利润卡片</small></div></div>
+      <div class="head-actions">
+        <label class="project-picker"><span>品类</span><select id="projectPicker" aria-label="选择品类"></select></label>
+        <button class="ghost-button" id="newProjectBtn" type="button">新建</button>
+        <button class="copy-button" id="copyTableBtn" type="button">复制到飞书表格</button>
+      </div>
+    </header>
+
+    <section class="product-panel" aria-labelledby="productTitle">
+      <div class="section-title"><div><span class="step">01</span><div><b id="productTitle">产品参数</b><small>修改后自动保存并重新计算</small></div></div><span class="save-state" id="saveState">已保存</span></div>
+      <div class="product-grid" id="productFields">
+        <label class="field field-name"><span>品名</span><input name="name" maxlength="30" placeholder="例如：浴室置物架"></label>
+        <label class="field"><span>成本（CNY）</span><input name="cost_cny" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>重量</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
+        <label class="field field-size"><span>长 × 宽 × 高</span><div class="dimension-inputs"><input name="length" type="number" min="0" step="0.01"><i>×</i><input name="width" type="number" min="0" step="0.01"><i>×</i><input name="height" type="number" min="0" step="0.01"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div></label>
+        <label class="field field-category"><span>亚马逊父品类</span><input name="category_text" placeholder="例如：Home &amp; Kitchen（用于匹配佣金）"></label>
+      </div>
+    </section>
+
+    <section class="market-panel" aria-labelledby="marketTitle">
+      <div class="section-title"><div><span class="step">02</span><div><b id="marketTitle">国家利润测算</b><small>勾选站点并填写当地售价</small></div></div><span class="site-count" id="siteCount"></span></div>
+      <div class="site-tabs" id="siteTabs"></div>
+      <div class="result-wrap">
+        <table class="result-table">
+          <thead><tr><th>国家</th><th>当地售价</th><th>佣金</th><th>FBA</th><th>头程</th><th>单件利润</th><th>利润率</th></tr></thead>
+          <tbody id="resultRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="embed-foot">
+      <span id="copyHint">复制内容不含图片，并附带“查看/修改”链接</span>
+      <a href="./index.html" target="_blank" rel="noopener">打开完整计算器 ↗</a>
+    </footer>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="./config.js"></script>
+  <script src="./embed.js?v=20260720-1"></script>
+</body>
+</html>

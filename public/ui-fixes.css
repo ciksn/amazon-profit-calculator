@@ -150,6 +150,8 @@ html {
   box-shadow: 0 0 0 3px #fff0e5;
 }
 
+.embed-entry { display:inline-flex; align-items:center; justify-content:center; text-decoration:none; white-space:nowrap; }
+
 .dimension-paste-hint {
   display: block;
   margin-top: 6px;
