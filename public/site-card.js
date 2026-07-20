@@ -50,6 +50,7 @@ function renderPickers(){
 function refreshProjectSummary(){const summary=state.bootstrap.projects.find((item)=>Number(item.id)===Number(state.project.id));if(summary)summary.name=state.project.name;renderPickers()}
 function fillFields(){
   for(const key of ['name','cost_cny','weight','weight_unit','length','width','height','dimension_unit'])field(key).value=state.project[key]??'';
+  $('#inlineCostInput').value=state.project.cost_cny??'';
   field('sale_price').value=state.listing.sale_price||'';field('category_text').value=state.listing.category_text||'';field('referral_rate_override').value=state.listing.referral_rate_override??'';
   renderParameterSummary();
 }
@@ -94,7 +95,8 @@ function vatExplanation(result){
   return ['VAT 计算',`站点：${state.country.code} · ${state.country.name}`,`含税售价：${money(result.sale_price)}`,`VAT 税率：${number(result.vat_rate,2)}%`,`未税售价：${money(result.sale_price)} ÷ (1 + ${number(result.vat_rate,2)}%) = ${money(net)}`,`售价内含 VAT：${money(result.sale_price)} − ${money(net)} = ${money(result.vat_amount)}`,`简便算法：${money(result.sale_price)} × ${number(grossShare,1)}% ≈ ${money(result.vat_amount)}`,`为什么是 ${number(grossShare,1)}%：VAT 在含税售价中的占比为 ${number(result.vat_rate,2)} ÷ ${number(100+Number(result.vat_rate),2)} = ${number(grossShare,3)}%，取一位小数为 ${number(grossShare,1)}%`].join('\n')
 }
 function resultCard(label,value,note='',className='',explanation=''){return `<div class="result-card ${className} ${explanation?'has-info':''}"><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b>${note?`<span>${escapeHtml(note)}</span>`:''}${explanation?`<i class="profit-info" tabindex="0" title="${escapeHtml(explanation)}" aria-label="查看${escapeHtml(label)}计算过程">i</i>`:''}</div>`}
-function costInputCard(){return `<label class="result-card cost-input-card"><small>成本（人民币）</small><div><i>¥</i><input id="inlineCostInput" type="number" min="0" step="0.01" value="${Number(state.project.cost_cny)||0}" aria-label="成本（人民币）"></div></label>`}
+function syncCostDraft(value,source){field('cost_cny').value=value;const input=$('#inlineCostInput');if(input&&input!==source&&input.value!==value)input.value=value}
+function bindCostEditor(input){if(!input)return;input.oninput=()=>{syncCostDraft(input.value,input);debounceSave(saveProduct,'productTimer')};input.onchange=()=>{syncCostDraft(input.value,input);clearTimeout(state.productTimer);state.pending=saveProduct()}}
 function targetPriceText(result){return [0,10,20,30].map((rate)=>`${rate}%：${result?.target_prices?.[rate]==null?'—':money(result.target_prices[rate])}`).join('\n')}
 function targetPriceGroup(result){return `<div class="result-card target-price-summary" tabindex="0" title="${escapeHtml(targetPriceText(result))}"><small>目标售价</small><b>0–30%</b><i class="profit-info" aria-hidden="true">i</i></div>`}
 function renderResult(){
@@ -108,11 +110,9 @@ function renderResult(){
     resultCard('税金',money(separatesVat(result)?result.tax_fee:Number(result.tax_fee)+Number(result.vat_amount)),'','',taxExplanation(result))
   ];
   if(separatesVat(result))cards.push(resultCard('VAT',money(result.vat_amount),'','vat-card',vatExplanation(result)));
-  cards.push(costInputCard(),
-    resultCard('利润率',`${number(result.profit_rate,1)}%`,'',`primary ${negative}`,profitExplanation(result)),
+  cards.push(resultCard('利润率',`${number(result.profit_rate,1)}%`,'',`primary ${negative}`,profitExplanation(result)),
     targetPriceGroup(result)
   );$('#resultGrid').innerHTML=cards.join('');
-  const costInput=$('#inlineCostInput');costInput.oninput=()=>{field('cost_cny').value=costInput.value;debounceSave(saveProduct,'productTimer')};costInput.onchange=()=>{field('cost_cny').value=costInput.value;clearTimeout(state.productTimer);state.pending=saveProduct()};
 }
 
 function recordById(id){return state.records.find((item)=>item.id===id)}
@@ -177,6 +177,7 @@ function bindEvents(){
   $('#projectPicker').onchange=async(event)=>{await state.pending;state.project=await api(`/api/projects/${event.target.value}`);const code=state.project.listings.some((item)=>item.country_code===state.country.code)?state.country.code:state.bootstrap.countries[0].code;setCountry(code,false);renderPickers();fillFields();await calculate();renderRecords()};
   for(const name of ['name','cost_cny','weight','weight_unit','length','width','height','dimension_unit']){const input=field(name);input.oninput=()=>debounceSave(saveProduct,'productTimer');input.onchange=()=>{clearTimeout(state.productTimer);state.pending=saveProduct()}}
   for(const name of ['sale_price','category_text','referral_rate_override']){const input=field(name);input.oninput=()=>debounceSave(saveListing,'listingTimer');input.onchange=()=>{clearTimeout(state.listingTimer);state.pending=saveListing()}}
+  bindCostEditor($('#inlineCostInput'));
   $('#readDimensionsBtn').onclick=readDimensions;$$('[data-site-dimension]').forEach((input)=>input.addEventListener('paste',handleDimensionPaste));$('#copyResultBtn').onclick=copyResult;
   $('#openParametersBtn').onclick=openParameters;$('#newRecordBtn').onclick=addRecord;$$('[data-close-parameters]').forEach((button)=>button.onclick=closeParameters);document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&!$('#parametersModal').hidden)closeParameters()});
   syncChannel?.addEventListener('message',(event)=>{if(event.data?.source!=='site-card')reloadFromSharedData(event.data)});window.addEventListener('storage',(event)=>{if(event.key===recordStorageKey){state.records=loadRecords();renderRecords();return}if(!['margingo-github-pages-v1','margingo-sync-pulse'].includes(event.key))return;let message={};try{message=JSON.parse(event.newValue)||{}}catch{}reloadFromSharedData(message)});window.addEventListener('focus',()=>reloadFromSharedData());
