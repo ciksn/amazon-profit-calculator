@@ -2,7 +2,20 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { calculateProfit, normalizeDimensions, normalizeWeight } = require('../lib/profit');
+const { calculateProfit,findSalePriceForProfitRate,normalizeDimensions,normalizeWeight } = require('../lib/profit');
+
+test('目标利润率售价按完整费用模型反算到分', () => {
+  const args={
+    project:{ cost_cny:72,length:20,width:10,height:5,dimension_unit:'cm',weight:.5,weight_unit:'kg' },
+    country:{ code:'US',currency:'USD',symbol:'$',cny_per_local:7.2,vat_rate:0,tax_note:'' },
+    listing:{ sale_price:30,matched_referral_rate:15 },
+    fbaRules:[{ size_name:'标准件',max_long_cm:45,max_mid_cm:34,max_short_cm:26,max_weight_kg:2,included_weight_kg:.5,base_fee:4,per_kg_fee:1,surcharge_rate:0,status:'verified' }],
+    freightRule:{ price_per_kg_cny:10,min_charge_cny:0,volume_divisor:6000,status:'verified' }
+  };
+  const price=findSalePriceForProfitRate({ ...args,targetRate:20 });
+  assert.ok(calculateProfit({ ...args,listing:{ ...args.listing,sale_price:price } }).profit_rate>=20);
+  assert.ok(calculateProfit({ ...args,listing:{ ...args.listing,sale_price:price-.01 } }).profit_rate<20);
+});
 
 test('厘米和 KG 输入保持原值并按最长边排序', () => {
   assert.deepEqual(normalizeDimensions({ length:10,width:30,height:20,dimension_unit:'cm' }),[30,20,10]);

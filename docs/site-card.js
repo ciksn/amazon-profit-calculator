@@ -36,7 +36,7 @@ async function initialize(){
 function setCountry(code,shouldCalculate=true){
   state.country=state.bootstrap.countries.find((item)=>item.code===code)||state.bootstrap.countries[0];
   state.listing=state.project.listings.find((item)=>item.country_code===state.country.code);
-  $('#siteFlag').textContent=state.country.flag;$('#siteName').textContent=`${marketCode(state.country.code)} · ${state.country.name}`;$('#priceSymbol').textContent=state.country.symbol;
+  $('#priceSymbol').textContent=state.country.symbol;
   updateLinks();if(shouldCalculate){fillFields();state.pending=calculate()}
 }
 function renderPickers(){
@@ -48,34 +48,29 @@ function fillFields(){
   field('sale_price').value=state.listing.sale_price||'';field('category_text').value=state.listing.category_text||'';field('referral_rate_override').value=state.listing.referral_rate_override??'';
   renderParameterSummary();
 }
-function renderParameterSummary(){const commission=state.listing.referral_rate_override??state.listing.matched_referral_rate??state.result?.referral_base_rate??15;$('#parameterSummary').textContent=`佣金 ${number(commission,1)}%`}
+function renderParameterSummary(){}
 async function calculate(){
-  const payload=await api('/api/calculate',{method:'POST',body:JSON.stringify({project_id:state.project.id,country_code:state.country.code})});state.result=payload.results?.[0]||null;renderResult();
+  const payload=await api('/api/calculate',{method:'POST',body:JSON.stringify({project_id:state.project.id,country_code:state.country.code,include_target_prices:true})});state.result=payload.results?.[0]||null;renderResult();
 }
 function money(value){return `${state.result?.symbol||state.country.symbol}${number(value)}`}
 function profitExplanation(result){
   if(!result||!Number(result.sale_price))return '填写当地售价后显示完整计算过程';
   return ['利润率计算过程',`含税售价：${money(result.sale_price)}`,`减 VAT：${money(result.vat_amount)}`,`净销售收入：${money(result.net_revenue)}`,`减 ${result.tax_label||'税费'}：${money(result.tax_fee)}`,`减佣金：${money(result.referral_fee)}（${number(result.referral_rate,2)}%）`,`减 FBA：${money(result.fba_fee)}`,`减头程：${money(result.freight_fee)}`,`减产品成本：${money(result.product_cost)}`,`单件利润：${money(result.profit)}`,`利润率：${money(result.profit)} ÷ ${money(result.sale_price)} × 100 = ${number(result.profit_rate,1)}%`].join('\n');
 }
-function resultCard(label,value,note='',className='',withInfo=false){return `<div class="result-card ${className}"><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b><span>${escapeHtml(note)}</span>${withInfo?`<i class="profit-info" tabindex="0" title="${escapeHtml(profitExplanation(state.result))}" aria-label="查看利润率计算过程">i</i>`:''}</div>`}
+function resultCard(label,value,note='',className='',withInfo=false){return `<div class="result-card ${className}"><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b>${note?`<span>${escapeHtml(note)}</span>`:''}${withInfo?`<i class="profit-info" tabindex="0" title="${escapeHtml(profitExplanation(state.result))}" aria-label="查看利润率计算过程">i</i>`:''}</div>`}
+function targetPriceGroup(result){return `<div class="result-card target-price-group"><small>FBA 目标售价</small><div class="target-price-values">${[0,10,20,30].map((rate)=>`<span><i>${rate}%</i><b>${result.target_prices?.[rate]==null?'—':escapeHtml(money(result.target_prices[rate]))}</b></span>`).join('')}</div></div>`}
 function renderResult(){
   const result=state.result;const priced=Number(state.listing.sale_price)>0;
   renderParameterSummary();
-  $('#resultSubtitle').textContent=`${state.country.flag} ${marketCode(state.country.code)} · 币种 ${state.country.currency} · 汇率 ¥${number(state.country.cny_per_local,4)}`;
-  if(!result||!priced){$('#resultGrid').innerHTML='<div class="empty-result">填写当地售价后显示利润结果</div>';$('#calculationRows').innerHTML='<div class="calc-formula">当前售价为空，暂不计算利润率。</div>';return}
+  if(!result||!priced){$('#resultGrid').innerHTML='<div class="empty-result">填写当地售价后显示利润结果</div>';return}
   const negative=Number(result.profit)<0?'negative':'';
   $('#resultGrid').innerHTML=[
-    resultCard('利润率',`${number(result.profit_rate,1)}%`,'单件利润 ÷ 当地售价',`primary ${negative}`,true),
-    resultCard('单件利润',money(result.profit),'扣除全部费用后',negative),
-    resultCard('亚马逊佣金',money(result.referral_fee),`${number(result.referral_rate,2)}% · ${state.listing.referral_rate_override==null?'品类匹配':'手动设置'}`),
-    resultCard('FBA 配送费',money(result.fba_fee),result.size_tier_name||'待匹配'),
-    resultCard('头程费用',money(result.freight_fee),result.freight_pricing_mode==='cbm'?`${number(result.volume_cbm,6)} m³`:`计费重 ${number(result.billable_weight_kg,3)} kg`),
-    resultCard(result.tax_label||'税费',money(result.tax_fee),`VAT ${money(result.vat_amount)}`),
-    resultCard('产品成本',money(result.product_cost),`人民币 ¥${number(state.project.cost_cny)}`),
-    resultCard('计费重量',`${number(result.billable_weight_kg,3)} kg`,`实重 ${number(result.actual_weight_kg,3)} / 体积重 ${number(result.volume_weight_kg,3)}`)
+    resultCard('FBA 配送费',money(result.fba_fee)),
+    resultCard('头程',money(result.freight_fee)),
+    resultCard('税金',money(Number(result.tax_fee)+Number(result.vat_amount))),
+    resultCard('利润率',`${number(result.profit_rate,1)}%`,'',`primary ${negative}`,true),
+    targetPriceGroup(result)
   ].join('');
-  const rows=[['含税售价',money(result.sale_price)],['减：VAT',`− ${money(result.vat_amount)}`],['净销售收入',money(result.net_revenue)], [`减：${result.tax_label||'税费'}`,`− ${money(result.tax_fee)}`],['减：亚马逊佣金',`− ${money(result.referral_fee)}（${number(result.referral_rate,2)}%）`],['减：FBA 配送费',`− ${money(result.fba_fee)}`],['减：头程费用',`− ${money(result.freight_fee)}`],['减：产品成本',`− ${money(result.product_cost)}`],['单件利润',money(result.profit)]];
-  $('#calculationRows').innerHTML=rows.map(([label,value],index)=>`<div class="calc-row ${index===rows.length-1?'total':''}"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('')+`<div class="calc-formula">利润率 = ${escapeHtml(money(result.profit))} ÷ ${escapeHtml(money(result.sale_price))} × 100 = <b>${number(result.profit_rate,1)}%</b></div>`;
 }
 
 async function saveProduct(){
@@ -100,7 +95,7 @@ function applyDimensions(parsed){for(const key of ['length','width','height'])fi
 function recognizeDimensions(text){const parsed=window.DimensionParser?.parseDimensions(text,field('dimension_unit').value||'cm');if(!parsed){toast('未识别到完整尺寸，请使用 27.2 × 12.5 × 54 cm 格式');return false}applyDimensions(parsed);return true}
 async function readDimensions(){if(!navigator.clipboard?.readText)return toast('请将完整尺寸直接粘贴到任一尺寸框');try{const text=await navigator.clipboard.readText();if(!text.trim())return toast('剪贴板为空');recognizeDimensions(text)}catch{toast('剪贴板读取被拦截，请直接粘贴到尺寸框')}}
 function handleDimensionPaste(event){const text=event.clipboardData?.getData('text')||'';const parsed=window.DimensionParser?.parseDimensions(text,field('dimension_unit').value||'cm');if(!parsed)return;event.preventDefault();applyDimensions(parsed)}
-async function copyResult(){if(!state.result||!Number(state.listing.sale_price))return toast('请先填写售价');const row=[`${marketCode(state.country.code)} ${state.country.name}`,state.project.name,`${state.country.symbol}${number(state.listing.sale_price)}`,`${number(state.result.profit_rate,1)}%`];const text=row.join('\t');const html=`<table><tbody><tr>${row.map((item)=>`<td>${escapeHtml(item)}</td>`).join('')}</tr></tbody></table>`;try{await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([text],{type:'text/plain'})})])}catch{await navigator.clipboard.writeText(text)}toast('已复制本站结果')}
+async function copyResult(){if(!state.result||!Number(state.listing.sale_price))return toast('请先填写售价');const text=`${number(state.result.profit_rate,1)}%`;const helper=document.createElement('textarea');helper.value=text;helper.setAttribute('readonly','');helper.style.cssText='position:fixed;left:-10000px;top:0;opacity:0';document.body.append(helper);helper.focus();helper.select();let copied=document.execCommand('copy');helper.remove();if(!copied){try{await navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob([text],{type:'text/plain'})})]);copied=true}catch{try{await navigator.clipboard.writeText(text);copied=true}catch{}}}toast(copied?`已复制利润率 ${text}`:'复制失败，请重试')}
 async function reloadFromSharedData(message={}){if(message.projectId&&Number(message.projectId)!==Number(state.project.id))return;clearTimeout(state.reloadTimer);state.reloadTimer=setTimeout(async()=>{try{state.project=await api(`/api/projects/${state.project.id}`);state.listing=state.project.listings.find((item)=>item.country_code===state.country.code);refreshProjectSummary();fillFields();await calculate()}catch{}},180)}
 
 function bindEvents(){

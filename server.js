@@ -4,7 +4,7 @@ const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
 const db = require('./lib/db');
-const { calculateProfit } = require('./lib/profit');
+const { calculateProfit,findSalePriceForProfitRate } = require('./lib/profit');
 const { lookupJapanTariff } = require('./lib/japan-tariff');
 const PORT = Number(process.env.PORT || 4173);
 const publicDir = path.join(__dirname, 'public');
@@ -260,7 +260,11 @@ async function api(req, res, url) {
       const fbaRules = db.prepare('SELECT * FROM fba_rules WHERE country_code = ?').all(country.code);
       const sizeTiers = db.prepare('SELECT * FROM size_tiers WHERE country_code = ?').all(country.code);
       const freightRule = db.prepare('SELECT * FROM freight_rules WHERE country_code = ?').get(country.code);
-      results.push(calculateProfit({ project,country,listing,fbaRules,sizeTiers,freightRule }));
+      const result=calculateProfit({ project,country,listing,fbaRules,sizeTiers,freightRule });
+      if (body.include_target_prices) result.target_prices=Object.fromEntries([0,10,20,30].map((targetRate)=>[
+        targetRate,findSalePriceForProfitRate({ project,country,listing,fbaRules,sizeTiers,freightRule,targetRate })
+      ]));
+      results.push(result);
     }
     return json(res,200,{ project_id:project.id,results });
   }
