@@ -4,13 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>MarginGo · 单站点利润卡片</title>
-  <link rel="stylesheet" href="./site-card.css?v=20260720-14">
+  <link rel="stylesheet" href="./site-card.css?v=20260720-15">
 </head>
 <body>
   <main class="site-shell">
     <section class="site-card">
       <header class="site-head">
         <label class="project-picker"><span>品类</span><select id="projectPicker" aria-label="选择品类"></select></label>
+        <label class="header-price header-cost"><span>成本</span><div><b>¥</b><input id="inlineCostInput" type="number" min="0" step="0.01" aria-label="成本（人民币）"></div></label>
         <label class="header-price"><span>当地售价</span><div><b id="priceSymbol"></b><input name="sale_price" type="number" min="0" step="0.01" aria-label="当地售价"></div></label>
         <span class="save-state" id="saveState">已保存</span>
         <button class="copy-button" id="copyResultBtn" type="button">复制利润率</button>
@@ -48,6 +49,6 @@
   <script src="./profit-engine.js"></script>
   <script src="./static-api.js"></script>
   <script src="./dimensions.js"></script>
-  <script src="./site-card.js?v=20260720-18"></script>
+  <script src="./site-card.js?v=20260720-20"></script>
 </body>
 </html>
