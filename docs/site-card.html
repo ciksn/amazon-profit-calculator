@@ -3,23 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>MarginGo ? ???????</title>
+  <title>MarginGo · 单站点利润卡片</title>
   <link rel="stylesheet" href="./site-card.css?v=20260720-14">
 </head>
 <body>
   <main class="site-shell">
     <section class="site-card">
       <header class="site-head">
-        <label class="project-picker"><span>??</span><select id="projectPicker" aria-label="????"></select></label>
-        <label class="header-price"><span>????</span><div><b id="priceSymbol"></b><input name="sale_price" type="number" min="0" step="0.01" aria-label="????"></div></label>
-        <span class="save-state" id="saveState">???</span>
-        <button class="copy-button" id="copyResultBtn" type="button">?????</button>
-        <button class="settings-button" id="openParametersBtn" type="button">????</button>
+        <label class="project-picker"><span>品类</span><select id="projectPicker" aria-label="选择品类"></select></label>
+        <label class="header-price"><span>当地售价</span><div><b id="priceSymbol"></b><input name="sale_price" type="number" min="0" step="0.01" aria-label="当地售价"></div></label>
+        <span class="save-state" id="saveState">已保存</span>
+        <button class="copy-button" id="copyResultBtn" type="button">复制利润率</button>
+        <button class="settings-button" id="openParametersBtn" type="button">参数设置</button>
       </header>
       <div class="result-content">
         <div class="result-strip">
           <div class="result-grid" id="resultGrid"></div>
-          <button class="record-button" id="newRecordBtn" type="button">????</button>
+          <button class="record-button" id="newRecordBtn" type="button">新建记录</button>
         </div>
         <section class="record-section" id="recordSection">
           <div class="record-table" id="recordTable"></div>
@@ -30,17 +30,17 @@
   <div class="settings-modal" id="parametersModal" hidden>
     <div class="settings-backdrop" data-close-parameters></div>
     <section class="settings-card" role="dialog" aria-modal="true" aria-labelledby="parametersTitle">
-      <div class="settings-head"><div><b id="parametersTitle">???????</b><small>???????????????</small></div><button type="button" data-close-parameters aria-label="??">?</button></div>
-      <div class="settings-toolbar"><span>??????????????????</span><button id="readDimensionsBtn" type="button">???????</button></div>
+      <div class="settings-head"><div><b id="parametersTitle">产品与本站参数</b><small>修改后自动保存，并同步到总卡片</small></div><button type="button" data-close-parameters aria-label="关闭">×</button></div>
+      <div class="settings-toolbar"><span>本站佣金独立设置；其余为产品基础参数</span><button id="readDimensionsBtn" type="button">识别剪贴板尺寸</button></div>
       <div class="input-grid" id="siteFields">
-        <label class="field field-name"><span>????</span><input name="name" maxlength="30"></label>
-        <label class="field"><span>????</span><div class="input-affix"><b>?</b><input name="cost_cny" type="number" min="0" step="0.01"></div></label>
-        <label class="field field-category"><span>??????</span><input name="category_text" placeholder="????????"></label>
-        <label class="field"><span>??????</span><div class="input-affix"><input name="referral_rate_override" type="number" min="0" max="100" step="0.1" placeholder="????"><em>%</em></div></label>
-        <label class="field"><span>??</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
-        <div class="field field-size"><span>? ? ? ? ?</span><div class="dimension-inputs"><input name="length" data-site-dimension type="number" min="0" step="0.01" aria-label="????"><i>?</i><input name="width" data-site-dimension type="number" min="0" step="0.01" aria-label="????"><i>?</i><input name="height" data-site-dimension type="number" min="0" step="0.01" aria-label="????"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div></div>
+        <label class="field field-name"><span>产品名称</span><input name="name" maxlength="30"></label>
+        <label class="field"><span>产品成本</span><div class="input-affix"><b>¥</b><input name="cost_cny" type="number" min="0" step="0.01"></div></label>
+        <label class="field field-category"><span>亚马逊父品类</span><input name="category_text" placeholder="用于自动匹配佣金"></label>
+        <label class="field"><span>本站手动佣金</span><div class="input-affix"><input name="referral_rate_override" type="number" min="0" max="100" step="0.1" placeholder="留空自动"><em>%</em></div></label>
+        <label class="field"><span>重量</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
+        <div class="field field-size"><span>长 × 宽 × 高</span><div class="dimension-inputs"><input name="length" data-site-dimension type="number" min="0" step="0.01" aria-label="产品长度"><i>×</i><input name="width" data-site-dimension type="number" min="0" step="0.01" aria-label="产品宽度"><i>×</i><input name="height" data-site-dimension type="number" min="0" step="0.01" aria-label="产品高度"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div></div>
       </div>
-      <div class="settings-actions"><span>??????????????</span><button type="button" data-close-parameters>??</button></div>
+      <div class="settings-actions"><span>产品基础参数会同步到其他站点</span><button type="button" data-close-parameters>完成</button></div>
     </section>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

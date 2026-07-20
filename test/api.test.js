@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { server,matchCommission } = require('../server');
 
-test('???????????????????', () => {
+test('未命中具体品类时按站点使用其他类别佣金', () => {
   assert.equal(matchCommission('US','Health & Household',30).rule.rate,15);
   assert.equal(matchCommission('AU','Health & Household',30).rule.rate,15);
   assert.equal(matchCommission('AE','Health & Household',100).rule.rate,10);
@@ -17,7 +17,7 @@ test('???????????????????', () => {
   assert.equal(matchCommission('ZZ','Unknown Category',30).matched,false);
 });
 
-test('????????????? FBA ???????', async (t) => {
+test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async (t) => {
   await new Promise((resolve) => server.listen(0,'127.0.0.1',resolve));
   const address=server.address();
   const base=`http://127.0.0.1:${address.port}`;
@@ -31,7 +31,7 @@ test('????????????? FBA ???????', async (t) => {
   const commissions=await (await fetch(`${base}/api/rules/commission`)).json();
   let projectId=bootstrap.projects[0]?.id;
   if (!projectId) {
-    const fallbackResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'????????'})});
+    const fallbackResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'接口测试基础项目'})});
     assert.equal(fallbackResponse.status,201);
     const fallbackProject=await fallbackResponse.json();
     projectId=fallbackProject.id;
@@ -60,12 +60,12 @@ test('????????????? FBA ???????', async (t) => {
 
   const missing=await fetch(`${base}/api/projects/99999999`);
   assert.equal(missing.status,404);
-  const createdResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'????????'})});
+  const createdResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'自动测试临时项目'})});
   assert.equal(createdResponse.status,201);
   const created=await createdResponse.json();
   try {
-    const updated=await (await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'???????',cost_cny:115,weight:2,image_data:'data:image/png;base64,dGVzdA=='})})).json();
-    assert.equal(updated.name,'???????');
+    const updated=await (await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'已更新临时项目',cost_cny:115,weight:2,image_data:'data:image/png;base64,dGVzdA=='})})).json();
+    assert.equal(updated.name,'已更新临时项目');
     assert.equal(updated.weight,2);
     assert.equal(updated.image_data,'data:image/png;base64,dGVzdA==');
     const listingUpdate=await (await fetch(`${base}/api/projects/${created.id}/countries/JP`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({selected:true,sale_price:7000,category_text:'Unknown Category',customs_rate:5})})).json();
@@ -88,8 +88,8 @@ test('????????????? FBA ???????', async (t) => {
     assert.equal(competitor.cost_cny,115);
     assert.equal(competitor.uses_project_defaults,1);
     assert.equal(competitor.profit_rate,null);
-    const savedCompetitor=await (await fetch(`${base}/api/competitors/${competitor.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'?? A',sale_price:6500,cost_cny:88})})).json();
-    assert.equal(savedCompetitor.name,'?? A');
+    const savedCompetitor=await (await fetch(`${base}/api/competitors/${competitor.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'竞品 A',sale_price:6500,cost_cny:88})})).json();
+    assert.equal(savedCompetitor.name,'竞品 A');
     assert.equal(savedCompetitor.cost_cny,88);
     assert.equal(savedCompetitor.uses_project_defaults,0);
     assert.equal(typeof savedCompetitor.profit_rate,'number');
