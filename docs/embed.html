@@ -13,7 +13,7 @@
       <div class="head-actions">
         <label class="project-picker"><span>品类</span><select id="projectPicker" aria-label="选择品类"></select></label>
         <button class="ghost-button" id="newProjectBtn" type="button">新建</button>
-        <button class="copy-button" id="copyTableBtn" type="button">复制到飞书表格</button>
+        <button class="copy-button" id="copyTableBtn" type="button">复制产品结果</button>
       </div>
     </header>
 
@@ -29,7 +29,7 @@
     </section>
 
     <section class="market-panel" aria-labelledby="marketTitle">
-      <div class="section-title"><div><span class="step">02</span><div><b id="marketTitle">国家利润测算</b><small>勾选站点并填写当地售价</small></div></div><span class="site-count" id="siteCount"></span></div>
+      <div class="section-title"><div><span class="step">02</span><div><b id="marketTitle">国家利润测算</b><small>勾选站点并填写当地售价</small></div></div><div class="market-title-actions"><span class="site-count" id="siteCount"></span><button class="site-copy-button" id="copySiteProfitBtn" type="button">复制各站点利润率表格</button></div></div>
       <div class="site-tabs" id="siteTabs"></div>
       <div class="result-wrap">
         <table class="result-table">
@@ -40,7 +40,7 @@
     </section>
 
     <footer class="embed-foot">
-      <span id="copyHint">复制内容不含图片，并附带“查看/修改”链接</span>
+      <span id="copyHint">复制内容不含图片；“调整”链接打开完整计算页面</span>
       <a href="./index.html" target="_blank" rel="noopener">打开完整计算器 ↗</a>
     </footer>
   </main>

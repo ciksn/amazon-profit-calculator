@@ -73,11 +73,95 @@ function countryFor(code) { return state.bootstrap.countries.find((country) => c
 function resultFor(projectId,code) { return (state.resultsByProject[projectId] || []).find((result) => result.country_code === code); }
 function formatNumber(value,digits=2) { return Number(value || 0).toLocaleString('zh-CN',{ maximumFractionDigits:digits }); }
 
+function encodeSharedState(value) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value)); let binary = '';
+  for (let i=0;i<bytes.length;i+=8192) binary += String.fromCharCode(...bytes.subarray(i,i+8192));
+  return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function decodeSharedState(value) {
+  const padded = value.replace(/-/g,'+').replace(/_/g,'/') + '==='.slice((value.length + 3) % 4);
+  const binary = atob(padded); const bytes = Uint8Array.from(binary,(char) => char.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+function sharedProjectKey(project) {
+  const storageKey = `margingo-full-key:${project.id}`;
+  let key = localStorage.getItem(storageKey);
+  if (!key) {
+    key = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(storageKey,key);
+  }
+  localStorage.setItem(`margingo-shared-project:${key}`,String(project.id));
+  return key;
+}
+function projectSnapshot(project) {
+  return { v:1,key:sharedProjectKey(project),product:{ name:project.name,cost_cny:project.cost_cny,length:project.length,width:project.width,height:project.height,
+    dimension_unit:project.dimension_unit,weight:project.weight,weight_unit:project.weight_unit },
+    listings:project.listings.filter((item) => item.selected).map((item) => ({ country_code:item.country_code,selected:true,
+      sale_price:item.sale_price,category_text:item.category_text,referral_rate_override:item.referral_rate_override,
+      declaration_ratio:item.declaration_ratio,declared_value_override:item.declared_value_override,customs_rate:item.customs_rate,
+      consumption_tax_rate:item.consumption_tax_rate,customs_hs_code:item.customs_hs_code,customs_preference:item.customs_preference })) };
+}
+function projectAdjustLink(project) {
+  const url = new URL('./index.html',location.href); url.search = ''; url.hash = `data=${encodeSharedState(projectSnapshot(project))}`; return url.href;
+}
+async function importSharedProjectFromHash() {
+  const encoded = location.hash.startsWith('#data=') ? location.hash.slice(6) : '';
+  if (!encoded) return null;
+  const payload = decodeSharedState(encoded);
+  if (payload?.v !== 1 || !payload.product || !Array.isArray(payload.listings)) throw new Error('调整链接格式不正确');
+  const mappingKey = `margingo-full-import:${encoded.slice(0,80)}`; let project = null;
+  const mappedId = (payload.key && localStorage.getItem(`margingo-shared-project:${payload.key}`)) || localStorage.getItem(mappingKey);
+  if (mappedId) project = await api(`/api/projects/${mappedId}`).catch(() => null);
+  if (!project) {
+    project = await api('/api/projects',{ method:'POST',body:JSON.stringify({ name:payload.product.name || '恢复的品类' }) });
+    localStorage.setItem(mappingKey,String(project.id));
+  }
+  if (payload.key) localStorage.setItem(`margingo-shared-project:${payload.key}`,String(project.id));
+  project = await api(`/api/projects/${project.id}`,{ method:'PUT',body:JSON.stringify(payload.product) });
+  for (const row of project.listings) if (row.selected) project = await api(`/api/projects/${project.id}/countries/${row.country_code}`,{ method:'PUT',body:JSON.stringify({ selected:false }) });
+  for (const item of payload.listings) if (project.listings.some((row) => row.country_code === item.country_code)) {
+    project = await api(`/api/projects/${project.id}/countries/${item.country_code}`,{ method:'PUT',body:JSON.stringify(item) });
+  }
+  return project.id;
+}
+
+async function writeTableRows(rows,linkIndex=-1) {
+  const text = rows.map((row) => row.join('\t')).join('\n');
+  const html = `<table><tbody>${rows.map((row) => `<tr>${row.map((item,index) => index === linkIndex
+    ? `<td><a href="${escapeHtml(item)}">调整</a></td>` : `<td>${escapeHtml(item)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  if (globalThis.ClipboardItem && navigator.clipboard?.write) {
+    await navigator.clipboard.write([new ClipboardItem({ 'text/html':new Blob([html],{ type:'text/html' }),'text/plain':new Blob([text],{ type:'text/plain' }) })]);
+  } else await navigator.clipboard.writeText(text);
+}
+async function flushProjectPrices(project) {
+  for (const input of $$(`[data-project-id="${project.id}"][data-listing-input="sale_price"]`)) {
+    const listing = project.listings.find((item) => item.country_code === input.dataset.countryCode); const value = Number(input.value) || 0;
+    if (value === Number(listing?.sale_price || 0)) continue;
+    project = await api(`/api/projects/${project.id}/countries/${listing.country_code}`,{ method:'PUT',body:JSON.stringify({ sale_price:value }) });
+    replaceProject(project);
+  }
+  await calculateProject(project.id,false); return findProject(project.id);
+}
+async function copyProductResults(projectId) {
+  let project = await flushProjectPrices(findProject(projectId)); const link = projectAdjustLink(project);
+  const rows = project.listings.filter((item) => item.selected).map((listing) => { const result = resultFor(project.id,listing.country_code);
+    return [project.name,`${listing.symbol}${formatNumber(listing.sale_price)}`,result ? `${formatNumber(result.profit_rate,1)}%` : '—',link]; });
+  await writeTableRows(rows,3); toast(`已复制 ${rows.length} 行产品结果`);
+}
+async function copySiteProfitTable(projectId) {
+  const project = await flushProjectPrices(findProject(projectId));
+  const rows = project.listings.filter((item) => item.selected).map((listing) => { const country = countryFor(listing.country_code); const result = resultFor(project.id,listing.country_code);
+    return [`${marketCode(country.code)} ${country.name}`,project.name,`${listing.symbol}${formatNumber(listing.sale_price)}`,result ? `${formatNumber(result.profit_rate,1)}%` : '—']; });
+  await writeTableRows(rows); toast(`已复制 ${rows.length} 行站点利润率`);
+}
+
 async function initialize() {
+  const importedProjectId = await importSharedProjectFromHash();
   state.bootstrap = await api('/api/bootstrap');
   $('#adminCountryFilter').innerHTML = '<option value="">全部国家</option>' + state.bootstrap.countries.map((c) => `<option value="${c.code}">${c.flag} ${c.name}</option>`).join('');
   renderSitePortal();
   await loadAllProjects();
+  if (importedProjectId) { state.expanded.add(Number(importedProjectId)); renderCategoryList(); toast('已从调整链接恢复到完整计算页面'); }
 }
 
 async function refreshBootstrap() {
@@ -153,6 +237,8 @@ function categoryCard(project,index) {
       </button>
       <div class="category-sites"><small>测算站点</small><div>${siteButtons}</div></div>
       <div class="category-row-actions">
+        <button class="copy-category" type="button" data-copy-product="${project.id}" title="?????????????????">??????</button>
+        <button class="copy-category" type="button" data-copy-site-profit="${project.id}" title="???????????????">??????</button>
         <button class="delete-category" type="button" data-delete-project="${project.id}" aria-label="删除品类" title="删除品类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button>
         <button class="edit-category" type="button" data-edit-project="${project.id}" aria-label="编辑 ${escapeHtml(project.name)}" title="编辑品类信息">编辑</button>
       </div>
@@ -203,6 +289,8 @@ function bindCategoryEvents() {
     toggleExpanded(row.dataset.expandRow);
   });
   $$('[data-delete-project]').forEach((button) => button.onclick = () => deleteProject(button.dataset.deleteProject));
+  $$('[data-copy-product]').forEach((button) => button.onclick = () => copyProductResults(button.dataset.copyProduct).catch((error) => toast(error.message)));
+  $$('[data-copy-site-profit]').forEach((button) => button.onclick = () => copySiteProfitTable(button.dataset.copySiteProfit).catch((error) => toast(error.message)));
   $$('[data-edit-commission]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editCommission,'commission'));
   $$('[data-edit-freight]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editFreight,'freight'));
   $$('[data-edit-tax]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editTax,'tax'));

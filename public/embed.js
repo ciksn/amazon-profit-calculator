@@ -35,7 +35,7 @@ function snapshot(){
   const p=state.project;
   return {v:1,key:state.shareKey||newShareKey(),product:{name:p.name,cost_cny:p.cost_cny,length:p.length,width:p.width,height:p.height,dimension_unit:p.dimension_unit,weight:p.weight,weight_unit:p.weight_unit},listings:p.listings.filter((item)=>item.selected).map((item)=>({country_code:item.country_code,selected:true,sale_price:item.sale_price,category_text:item.category_text,referral_rate_override:item.referral_rate_override,declaration_ratio:item.declaration_ratio,declared_value_override:item.declared_value_override,customs_rate:item.customs_rate,consumption_tax_rate:item.consumption_tax_rate,customs_hs_code:item.customs_hs_code,customs_preference:item.customs_preference}))};
 }
-function stateLink(){const url=new URL('./embed.html',location.href);url.search='';url.hash=`data=${encodeState(snapshot())}`;return url.href}
+function stateLink(){const data=snapshot();localStorage.setItem(`margingo-shared-project:${data.key}`,String(state.project.id));const url=new URL('./index.html',location.href);url.search='';url.hash=`data=${encodeState(data)}`;return url.href}
 
 async function importSnapshot(payload,encoded){
   if(payload?.v!==1||!payload.product||!Array.isArray(payload.listings))throw new Error('恢复链接格式不正确');
@@ -123,13 +123,7 @@ async function savePrice(code,value){
   catch(error){saving(false,true);toast(error.message)}
 }
 
-function copyRows(link){
-  return state.project.listings.filter((item)=>item.selected).map((listing)=>{
-    const country=state.bootstrap.countries.find((item)=>item.code===listing.country_code);const result=resultFor(listing.country_code);const commission=listing.referral_rate_override??listing.matched_referral_rate??result?.referral_base_rate??15;
-    return [state.project.name,`¥${number(state.project.cost_cny)}`,`${number(state.project.length)}×${number(state.project.width)}×${number(state.project.height)} ${String(state.project.dimension_unit||'cm').toUpperCase()}`,`${number(state.project.weight,3)} ${String(state.project.weight_unit||'kg').toUpperCase()}`,`${country.flag} ${country.name}`,`${listing.symbol}${number(listing.sale_price)}`,`${number(commission)}%`,result?`${result.symbol}${number(result.fba_fee)}`:'—',result?`${result.symbol}${number(result.freight_fee)}`:'—',result?`${result.profit<0?'-':''}${result.symbol}${number(Math.abs(result.profit))}`:'—',result?`${number(result.profit_rate,1)}%`:'—',link];
-  });
-}
-async function copyTable(){
+async function flushDrafts(){
   await state.pending;
   const draftPrices=Object.fromEntries($$('[data-price]').map((input)=>[input.dataset.price,input.value]));
   await saveProduct();
@@ -138,17 +132,27 @@ async function copyTable(){
     const listing=state.project.listings.find((item)=>item.country_code===code);
     if(Number(value||0)!==Number(listing?.sale_price||0))await savePrice(code,value);
   }
-  if(!state.project.listings.some((item)=>item.selected))return toast('请先选择测算站点');
-  const link=stateLink();const heads=['产品','成本','尺寸','重量','国家','售价','佣金','FBA','头程','单件利润','利润率','查看/修改'];const rows=copyRows(link);
-  const tsv=[heads,...rows].map((row)=>row.join('\t')).join('\n');
-  const html=`<table><thead><tr>${heads.map((item)=>`<th>${escapeHtml(item)}</th>`).join('')}</tr></thead><tbody>${rows.map((row)=>`<tr>${row.map((item,index)=>index===row.length-1?`<td><a href="${escapeHtml(item)}">查看/修改</a></td>`:`<td>${escapeHtml(item)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+async function writeRows(rows,linkIndex=-1){
+  const tsv=rows.map((row)=>row.join('\t')).join('\n');
+  const html=`<table><tbody>${rows.map((row)=>`<tr>${row.map((item,index)=>index===linkIndex?`<td><a href="${escapeHtml(item)}">调整</a></td>`:`<td>${escapeHtml(item)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   try{
     if(globalThis.ClipboardItem&&navigator.clipboard?.write)await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([tsv],{type:'text/plain'})})]);
     else await navigator.clipboard.writeText(tsv);
-    toast(`已复制 ${rows.length} 行，可直接粘贴到飞书表格`);
   }catch{
-    const helper=document.createElement('textarea');helper.value=tsv;helper.style.cssText='position:fixed;opacity:0';document.body.append(helper);helper.select();document.execCommand('copy');helper.remove();toast('已复制文本表格，可粘贴到飞书');
+    const helper=document.createElement('textarea');helper.value=tsv;helper.style.cssText='position:fixed;opacity:0';document.body.append(helper);helper.select();document.execCommand('copy');helper.remove();
   }
+}
+async function copyTable(){
+  await flushDrafts();
+  if(!state.project.listings.some((item)=>item.selected))return toast('请先选择测算站点');
+  const link=stateLink();const rows=state.project.listings.filter((item)=>item.selected).map((listing)=>{const result=resultFor(listing.country_code);return [state.project.name,`${listing.symbol}${number(listing.sale_price)}`,result?`${number(result.profit_rate,1)}%`:'—',link]});
+  await writeRows(rows,3);toast(`已复制 ${rows.length} 行产品结果`);
+}
+async function copySiteProfitTable(){
+  await flushDrafts();
+  const rows=state.project.listings.filter((item)=>item.selected).map((listing)=>{const country=state.bootstrap.countries.find((item)=>item.code===listing.country_code);const result=resultFor(listing.country_code);return [`${marketCode(country.code)} ${country.name}`,state.project.name,`${listing.symbol}${number(listing.sale_price)}`,result?`${number(result.profit_rate,1)}%`:'—']});
+  await writeRows(rows);toast(`已复制 ${rows.length} 行站点利润率`);
 }
 
 function bindEvents(){
@@ -160,6 +164,7 @@ function bindEvents(){
     state.project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:`新品测算 ${state.bootstrap.projects.length+1}`})});state.shareKey=newShareKey();localStorage.setItem(`margingo-embed-key:${state.project.id}`,state.shareKey);history.replaceState(null,'',`?project=${state.project.id}`);await refreshProjects();fillProduct();await calculate();toast('已新建品类');
   };
   $('#copyTableBtn').onclick=copyTable;
+  $('#copySiteProfitBtn').onclick=copySiteProfitTable;
 }
 
 initialize().catch((error)=>{console.error(error);toast(`加载失败：${error.message}`);$('#resultRows').innerHTML=`<tr><td class="empty-row" colspan="7">${escapeHtml(error.message)}</td></tr>`});

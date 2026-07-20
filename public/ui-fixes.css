@@ -277,6 +277,8 @@ body.modal-open { overflow: hidden; }
 .site-toggle:hover { color:#717177; background:#f3f3f5; }
 .site-toggle.active { color:#202023; background:#eeeeF0; font-weight:900; }
 .category-row-actions { display:flex; align-items:center; padding-right:9px; }
+.copy-category { height:32px; padding:0 9px; margin-right:5px; border:1px solid #e3e3e7; border-radius:9px; background:#fff; color:#6f7077; font-size:10px; font-weight:700; cursor:pointer; white-space:nowrap; }
+.copy-category:hover { border-color:#ffc79e; background:#fff7f1; color:var(--orange); }
 .delete-category,.edit-category { border:0; background:transparent; color:#a5a5aa; }
 .delete-category { width:31px; height:31px; border-radius:8px; opacity:0; transition:.2s; }
 .delete-category svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
