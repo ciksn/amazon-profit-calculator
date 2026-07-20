@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { server,matchCommission } = require('../server');
 
-test('未命中具体品类时按站点使用其他类别佣金', () => {
+test('???????????????????', () => {
   assert.equal(matchCommission('US','Health & Household',30).rule.rate,15);
   assert.equal(matchCommission('AU','Health & Household',30).rule.rate,15);
   assert.equal(matchCommission('AE','Health & Household',100).rule.rate,10);
@@ -17,7 +17,7 @@ test('未命中具体品类时按站点使用其他类别佣金', () => {
   assert.equal(matchCommission('ZZ','Unknown Category',30).matched,false);
 });
 
-test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async (t) => {
+test('????????????? FBA ???????', async (t) => {
   await new Promise((resolve) => server.listen(0,'127.0.0.1',resolve));
   const address=server.address();
   const base=`http://127.0.0.1:${address.port}`;
@@ -31,7 +31,7 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
   const commissions=await (await fetch(`${base}/api/rules/commission`)).json();
   let projectId=bootstrap.projects[0]?.id;
   if (!projectId) {
-    const fallbackResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'接口测试基础项目'})});
+    const fallbackResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'????????'})});
     assert.equal(fallbackResponse.status,201);
     const fallbackProject=await fallbackResponse.json();
     projectId=fallbackProject.id;
@@ -60,18 +60,27 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
 
   const missing=await fetch(`${base}/api/projects/99999999`);
   assert.equal(missing.status,404);
-  const createdResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'自动测试临时项目'})});
+  const createdResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'????????'})});
   assert.equal(createdResponse.status,201);
   const created=await createdResponse.json();
   try {
-    const updated=await (await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'已更新临时项目',cost_cny:115,weight:2,image_data:'data:image/png;base64,dGVzdA=='})})).json();
-    assert.equal(updated.name,'已更新临时项目');
+    const updated=await (await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'???????',cost_cny:115,weight:2,image_data:'data:image/png;base64,dGVzdA=='})})).json();
+    assert.equal(updated.name,'???????');
     assert.equal(updated.weight,2);
     assert.equal(updated.image_data,'data:image/png;base64,dGVzdA==');
     const listingUpdate=await (await fetch(`${base}/api/projects/${created.id}/countries/JP`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({selected:true,sale_price:7000,category_text:'Unknown Category',customs_rate:5})})).json();
     assert.equal(listingUpdate.listings.find((row)=>row.country_code==='JP').matched_referral_rate,15.4);
     const calculated=await (await fetch(`${base}/api/calculate`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({project_id:created.id})})).json();
     assert.ok(calculated.results.some((row)=>row.country_code==='JP' && row.customs_rate===5));
+    const variant=await (await fetch(`${base}/api/calculate`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({project_id:created.id,country_code:'JP',cost_cny_override:140,sale_price_override:8000,include_target_prices:true})})).json();
+    assert.equal(variant.results[0].sale_price,8000);
+    assert.equal(Object.keys(variant.results[0].target_prices).length,4);
+    assert.equal(typeof variant.results[0].fba_rule_base_fee,'number');
+    assert.equal(typeof variant.results[0].freight_rate_cny,'number');
+    assert.equal(typeof variant.results[0].tax_note,'string');
+    const unchanged=await (await fetch(`${base}/api/projects/${created.id}`)).json();
+    assert.equal(unchanged.cost_cny,115);
+    assert.equal(unchanged.listings.find((row)=>row.country_code==='JP').sale_price,7000);
     const competitorResponse=await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})});
     assert.equal(competitorResponse.status,201);
     const competitor=await competitorResponse.json();
@@ -79,8 +88,8 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
     assert.equal(competitor.cost_cny,115);
     assert.equal(competitor.uses_project_defaults,1);
     assert.equal(competitor.profit_rate,null);
-    const savedCompetitor=await (await fetch(`${base}/api/competitors/${competitor.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'竞品 A',sale_price:6500,cost_cny:88})})).json();
-    assert.equal(savedCompetitor.name,'竞品 A');
+    const savedCompetitor=await (await fetch(`${base}/api/competitors/${competitor.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'?? A',sale_price:6500,cost_cny:88})})).json();
+    assert.equal(savedCompetitor.name,'?? A');
     assert.equal(savedCompetitor.cost_cny,88);
     assert.equal(savedCompetitor.uses_project_defaults,0);
     assert.equal(typeof savedCompetitor.profit_rate,'number');
