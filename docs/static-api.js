@@ -11,6 +11,7 @@
   };
   let local = loadState();
   const save = () => localStorage.setItem(storageKey,JSON.stringify(local));
+  window.addEventListener('storage',(event) => { if (event.key === storageKey) local = loadState(); });
   const json = (status,body) => new Response(JSON.stringify(body),{ status,headers:{ 'Content-Type':'application/json; charset=utf-8' } });
   const readBody = (options) => options?.body ? JSON.parse(options.body) : {};
   const tableName = (type) => ({ countries:'countries',sizes:'size_tiers',fba:'fba_rules',freight:'freight_rules',commission:'commission_rules' })[type] || type;
@@ -112,7 +113,8 @@
     return { ...row,cost_cny:competitorProject.cost_cny,length:competitorProject.length,width:competitorProject.width,
       height:competitorProject.height,dimension_unit:competitorProject.dimension_unit,weight:competitorProject.weight,
       weight_unit:competitorProject.weight_unit,category_text:categoryText,symbol:country.symbol,country_name:country.name,flag:country.flag,
-      profit_rate:filled ? calculated.profit_rate : null,profit:filled ? calculated.profit : null };
+      profit_rate:filled ? calculated.profit_rate : null,profit:filled ? calculated.profit : null,
+      calculation:filled ? calculated : null };
   }
 
   async function listCompetitors(projectId) {
@@ -228,9 +230,10 @@
     if (method === 'POST' && path === '/api/commission/match') { const body = readBody(options); return json(200,await matchCommission(body.country_code,body.text,body.sale_price)); }
     if (method === 'POST' && path === '/api/tariffs/japan/lookup') return json(200,await lookupTariff(readBody(options)));
     if (method === 'POST' && path === '/api/calculate') {
-      const project = await getProject(readBody(options).project_id); if (!project) return json(404,{ error:'品类不存在' });
+      const body = readBody(options); const project = await getProject(body.project_id); if (!project) return json(404,{ error:'品类不存在' });
       const activeCountries = await countries(); const fba = await rowsFor('fba'); const sizes = await rowsFor('sizes'); const freight = await rowsFor('freight');
-      const results = project.listings.filter((item) => item.selected).map((listing) => {
+      const listings = body.country_code ? project.listings.filter((item) => item.country_code === body.country_code) : project.listings.filter((item) => item.selected);
+      const results = listings.map((listing) => {
         const country = activeCountries.find((item) => item.code === listing.country_code);
         return window.MarginGoProfit.calculateProfit({ project,country,listing,fbaRules:fba.filter((row) => row.country_code === country.code),
           sizeTiers:sizes.filter((row) => row.country_code === country.code),freightRule:freight.find((row) => row.country_code === country.code) || null });

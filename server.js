@@ -252,7 +252,10 @@ async function api(req, res, url) {
     if (!project) return json(res,404,{ error:'品类不存在' });
     const countries = db.prepare('SELECT * FROM countries WHERE active = 1 ORDER BY priority').all();
     const results = [];
-    for (const listing of project.listings.filter((item) => item.selected)) {
+    const listings = body.country_code
+      ? project.listings.filter((item) => item.country_code === body.country_code)
+      : project.listings.filter((item) => item.selected);
+    for (const listing of listings) {
       const country = countries.find((item) => item.code === listing.country_code);
       const fbaRules = db.prepare('SELECT * FROM fba_rules WHERE country_code = ?').all(country.code);
       const sizeTiers = db.prepare('SELECT * FROM size_tiers WHERE country_code = ?').all(country.code);

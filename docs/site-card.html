@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>MarginGo · 单站点利润卡片</title>
+  <link rel="stylesheet" href="./site-card.css?v=20260720-4">
+</head>
+<body>
+  <main class="site-shell">
+    <section class="site-card">
+      <header class="site-head">
+        <div class="site-identity"><span id="siteFlag">🌐</span><div><small>单站点利润测算</small><h1 id="siteName">加载中</h1></div></div>
+        <label class="project-picker"><span>品类</span><select id="projectPicker" aria-label="选择品类"></select></label>
+        <label class="header-price"><span>当地售价</span><div><b id="priceSymbol"></b><input name="sale_price" type="number" min="0" step="0.01" aria-label="当地售价"></div></label>
+        <div class="parameter-summary" id="parameterSummary">佣金加载中</div>
+        <span class="save-state" id="saveState">已保存</span>
+        <button class="settings-button" id="openParametersBtn" type="button">参数设置</button>
+      </header>
+      <div class="result-content">
+      <div class="panel-title"><div><span>01</span><div><b>本站利润结果</b><small id="resultSubtitle">完整展示核心费用与利润</small></div></div><button id="copyResultBtn" type="button">复制本站结果</button></div>
+      <div class="result-grid" id="resultGrid"></div>
+      <details class="calculation-details" open>
+        <summary>查看利润率计算过程</summary>
+        <div id="calculationRows"></div>
+      </details>
+      </div>
+    </section>
+  </main>
+  <div class="settings-modal" id="parametersModal" hidden>
+    <div class="settings-backdrop" data-close-parameters></div>
+    <section class="settings-card" role="dialog" aria-modal="true" aria-labelledby="parametersTitle">
+      <div class="settings-head"><div><b id="parametersTitle">产品与本站参数</b><small>修改后自动保存，并同步到总卡片</small></div><button type="button" data-close-parameters aria-label="关闭">×</button></div>
+      <div class="settings-toolbar"><span>本站佣金独立设置；其余为产品基础参数</span><button id="readDimensionsBtn" type="button">识别剪贴板尺寸</button></div>
+      <div class="input-grid" id="siteFields">
+        <label class="field field-name"><span>产品名称</span><input name="name" maxlength="30"></label>
+        <label class="field"><span>产品成本</span><div class="input-affix"><b>¥</b><input name="cost_cny" type="number" min="0" step="0.01"></div></label>
+        <label class="field field-category"><span>亚马逊父品类</span><input name="category_text" placeholder="用于自动匹配佣金"></label>
+        <label class="field"><span>本站手动佣金</span><div class="input-affix"><input name="referral_rate_override" type="number" min="0" max="100" step="0.1" placeholder="留空自动"><em>%</em></div></label>
+        <label class="field"><span>重量</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
+        <div class="field field-size"><span>长 × 宽 × 高</span><div class="dimension-inputs"><input name="length" data-site-dimension type="number" min="0" step="0.01" aria-label="产品长度"><i>×</i><input name="width" data-site-dimension type="number" min="0" step="0.01" aria-label="产品宽度"><i>×</i><input name="height" data-site-dimension type="number" min="0" step="0.01" aria-label="产品高度"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div></div>
+      </div>
+      <div class="settings-actions"><span>产品基础参数会同步到其他站点</span><button type="button" data-close-parameters>完成</button></div>
+    </section>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="./config.js"></script>
+  <script src="./profit-engine.js"></script>
+  <script src="./static-api.js"></script>
+  <script src="./dimensions.js"></script>
+  <script src="./site-card.js?v=20260720-5"></script>
+</body>
+</html>
