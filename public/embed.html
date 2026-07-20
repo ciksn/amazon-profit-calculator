@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>MarginGo · 飞书卡片版</title>
-  <link rel="stylesheet" href="./embed.css?v=20260720-3">
+  <link rel="stylesheet" href="./embed.css?v=20260720-6">
 </head>
 <body>
   <main class="embed-shell">
@@ -24,6 +24,7 @@
         <label class="field"><span>成本（CNY）</span><input name="cost_cny" type="number" min="0" step="0.01"></label>
         <label class="field"><span>重量</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
         <label class="field field-category"><span>亚马逊父品类</span><input name="category_text" placeholder="例如：Home &amp; Kitchen"></label>
+        <label class="field field-commission"><span>手动佣金（全部站点）</span><div class="percent-input"><input name="referral_rate_override" type="number" min="0" max="100" step="0.1" placeholder="留空自动匹配"><em>%</em></div></label>
         <div class="field field-size"><div class="field-label-row"><span>长 × 宽 × 高</span><button class="clipboard-dimension-button" id="readDimensionsBtn" type="button">识别剪贴板</button></div><div class="dimension-inputs"><input name="length" data-embed-dimension type="number" min="0" step="0.01" aria-label="产品长度"><i>×</i><input name="width" data-embed-dimension type="number" min="0" step="0.01" aria-label="产品宽度"><i>×</i><input name="height" data-embed-dimension type="number" min="0" step="0.01" aria-label="产品高度"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div><small class="dimension-paste-hint">支持 27.2 × 12.5 × 54 cm；也可直接粘贴到任一尺寸框</small></div>
       </div>
     </section>
@@ -33,7 +34,7 @@
       <div class="site-tabs" id="siteTabs"></div>
       <div class="result-wrap">
         <table class="result-table">
-          <thead><tr><th>国家</th><th>当地售价</th><th>佣金</th><th>FBA</th><th>头程</th><th>单件利润</th><th>利润率</th><th>复制</th></tr></thead>
+          <thead><tr><th>国家</th><th>当地售价</th><th>佣金</th><th>FBA</th><th>头程</th><th>单件利润</th><th>利润率</th><th>操作</th></tr></thead>
           <tbody id="resultRows"></tbody>
         </table>
       </div>
@@ -82,6 +83,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="./config.js"></script>
   <script src="./dimensions.js"></script>
-  <script src="./embed.js?v=20260720-4"></script>
+  <script src="./embed.js?v=20260720-9"></script>
 </body>
 </html>

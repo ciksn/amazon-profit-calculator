@@ -4,16 +4,45 @@ const state={bootstrap:null,project:null,results:[],competitors:[],activeCompeti
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
+const syncChannel='BroadcastChannel' in window?new BroadcastChannel('margingo-project-sync'):null;
 const escapeHtml=(value)=>String(value??'').replace(/[&<>"']/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const number=(value,digits=2)=>Number(value||0).toLocaleString('zh-CN',{maximumFractionDigits:digits});
 const marketCode=(code)=>code==='GB'?'UK':code;
 const resultFor=(code)=>state.results.find((item)=>item.country_code===code);
+
+function sharedCommissionOverride(){
+  const values=state.project?.listings?.map((item)=>item.referral_rate_override) || [];
+  if(!values.length || values.some((value)=>value===null || value===undefined || value===''))return '';
+  const first=Number(values[0]);return values.every((value)=>Number(value)===first)?first:'';
+}
+function profitInfoIcon(result){
+  if(!result || !Number(result.sale_price))return '';
+  const money=(value)=>`${result.symbol}${number(value)}`;
+  const explanation=[
+    '利润率计算过程',
+    `含税售价：${money(result.sale_price)}`,
+    `减 VAT：${money(result.vat_amount)}`,
+    `净销售收入：${money(result.net_revenue)}`,
+    `减 ${result.tax_label||'税费'}：${money(result.tax_fee)}`,
+    `减佣金：${money(result.referral_fee)}（${number(result.referral_rate,2)}%）`,
+    `减 FBA：${money(result.fba_fee)}`,
+    `减头程：${money(result.freight_fee)}`,
+    `减产品成本：${money(result.product_cost)}`,
+    `单件利润：${money(result.profit)}`,
+    `利润率：${money(result.profit)} ÷ ${money(result.sale_price)} × 100 = ${number(result.profit_rate,1)}%`
+  ].join('\n');
+  return `<span class="profit-info" tabindex="0" title="${escapeHtml(explanation)}" aria-label="查看利润率计算过程">i</span>`;
+}
 
 async function api(url,options={}){
   const target=/^https?:\/\//i.test(url)?url:`${apiBase}${url}`;
   const response=await fetch(target,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok)throw new Error(payload.error||'请求失败');
+  if(String(options.method||'GET').toUpperCase()!=='GET'){
+    const message={projectId:state.project?.id,source:'embed',at:Date.now()};syncChannel?.postMessage(message);
+    try{localStorage.setItem('margingo-sync-pulse',JSON.stringify(message))}catch{}
+  }
   return payload;
 }
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(el.timer);el.timer=setTimeout(()=>el.classList.remove('show'),2200)}
@@ -74,7 +103,8 @@ async function refreshProjects(){
 function sharedCategory(){return state.project.listings.find((item)=>item.selected&&item.category_text)?.category_text||state.project.listings.find((item)=>item.category_text)?.category_text||''}
 function fillProduct(){
   for(const key of ['name','cost_cny','weight','weight_unit','length','width','height','dimension_unit'])$(`[name="${key}"]`,$('#productFields')).value=state.project[key]??'';
-  $('[name="category_text"]',$('#productFields')).value=sharedCategory();renderSites();
+  $('[name="category_text"]',$('#productFields')).value=sharedCategory();
+  $('[name="referral_rate_override"]',$('#productFields')).value=sharedCommissionOverride();renderSites();
 }
 function renderSites(){
   $('#siteTabs').innerHTML=state.bootstrap.countries.map((country)=>{const listing=state.project.listings.find((item)=>item.country_code===country.code);return `<button class="site-tab ${listing?.selected?'active':''}" type="button" data-country="${country.code}" aria-pressed="${Boolean(listing?.selected)}">${country.flag} ${marketCode(country.code)}</button>`}).join('');
@@ -87,9 +117,12 @@ function renderResults(){
   if(!selected.length){$('#resultRows').innerHTML='<tr><td class="empty-row" colspan="8">请至少选择一个测算站点</td></tr>';return}
   $('#resultRows').innerHTML=selected.map((listing)=>{
     const country=state.bootstrap.countries.find((item)=>item.code===listing.country_code);const result=resultFor(listing.country_code);const priced=Number(listing.sale_price)>0;const cls=priced?(Number(result?.profit)>=0?'positive':'negative'):'';const commission=listing.referral_rate_override??listing.matched_referral_rate??result?.referral_base_rate??15;
-    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${escapeHtml(listing.matched_category||'默认费率')}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.fba_fee)}`:'—'}<span class="subvalue">${escapeHtml(result?.size_tier_name||'待计算')}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="${cls}">${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</td><td><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button></td></tr>`;
+    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.fba_fee)}`:'—'}<span class="subvalue">${escapeHtml(result?.size_tier_name||'待计算')}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="./site-card.html?project=${state.project.id}&country=${listing.country_code}" target="_blank" rel="noopener">单站卡片</a></div></td></tr>`;
   }).join('');
-  $$('[data-price]').forEach((input)=>input.onchange=()=>{state.pending=savePrice(input.dataset.price,input.value)});
+  $$('[data-price]').forEach((input)=>{
+    input.oninput=()=>{clearTimeout(input.saveTimer);input.saveTimer=setTimeout(()=>{state.pending=savePrice(input.dataset.price,input.value)},450)};
+    input.onchange=()=>{clearTimeout(input.saveTimer);state.pending=savePrice(input.dataset.price,input.value)};
+  });
   $$('[data-copy-listing]').forEach((button)=>button.onclick=()=>copyListingResult(button.dataset.copyListing));
 }
 
@@ -108,7 +141,7 @@ function renderCompetitors(){
   if(!selected.length){$('#competitorGroups').innerHTML='<div class="competitor-stats-empty">暂无可用竞品站点</div>';renderCompetitorStats();return}
   $('#competitorGroups').innerHTML=selected.map((country)=>{
     const rows=state.competitors.filter((item)=>item.country_code===country.code);
-    const body=rows.length?rows.map((item)=>`<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}</td><td><input class="competitor-input" data-competitor-name="${item.id}" maxlength="50" value="${escapeHtml(item.name)}" placeholder="输入竞品名称"></td><td><label class="competitor-price"><span>${escapeHtml(country.symbol)}</span><input type="number" min="0" step="0.01" data-competitor-price="${item.id}" value="${item.sale_price||''}" placeholder="0.00"></label></td><td><button class="cost-button" type="button" data-competitor-cost="${item.id}">${item.uses_project_defaults?'跟随':'独立'} · ¥${number(item.cost_cny)}</button></td><td class="${item.profit_rate==null?'':Number(item.profit_rate)>=0?'positive':'negative'}">${item.profit_rate==null?'—':`${number(item.profit_rate,1)}%`}</td><td><button class="delete-competitor" type="button" data-delete-competitor="${item.id}">删除</button></td></tr>`).join(''):'<tr><td class="competitor-empty" colspan="6">暂无竞品，点击右上角添加</td></tr>';
+    const body=rows.length?rows.map((item)=>`<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}</td><td><input class="competitor-input" data-competitor-name="${item.id}" maxlength="50" value="${escapeHtml(item.name)}" placeholder="输入竞品名称"></td><td><label class="competitor-price"><span>${escapeHtml(country.symbol)}</span><input type="number" min="0" step="0.01" data-competitor-price="${item.id}" value="${item.sale_price||''}" placeholder="0.00"></label></td><td><button class="cost-button" type="button" data-competitor-cost="${item.id}">${item.uses_project_defaults?'跟随':'独立'} · ¥${number(item.cost_cny)}</button></td><td class="profit-rate-cell ${item.profit_rate==null?'':Number(item.profit_rate)>=0?'positive':'negative'}"><b>${item.profit_rate==null?'—':`${number(item.profit_rate,1)}%`}</b>${profitInfoIcon(item.calculation)}</td><td><button class="delete-competitor" type="button" data-delete-competitor="${item.id}">删除</button></td></tr>`).join(''):'<tr><td class="competitor-empty" colspan="6">暂无竞品，点击右上角添加</td></tr>';
     return `<div class="competitor-site"><div class="competitor-site-head"><div><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><small>${rows.length} 条竞品</small></div><button class="add-competitor" type="button" data-add-competitor="${country.code}">+ 添加竞品</button></div><div class="competitor-table-wrap"><table class="competitor-table"><thead><tr><th>站点</th><th>产品名</th><th>售价</th><th>成本</th><th>利润率</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
   }).join('');
   $$('[data-competitor-name]').forEach((input)=>input.onchange=()=>saveCompetitor(input.dataset.competitorName,{name:input.value.trim()}));
@@ -185,6 +218,15 @@ async function saveCategory(){
     await calculate();await loadCompetitors();saving(false);
   }catch(error){saving(false,true);toast(error.message)}
 }
+async function saveCommission(){
+  const raw=formValue('referral_rate_override');const value=raw===''?null:Number(raw);
+  if(value!==null && (!Number.isFinite(value) || value<0 || value>100))return toast('佣金比例请输入 0–100');
+  saving(true);
+  try{
+    for(const listing of state.project.listings)state.project=await api(`/api/projects/${state.project.id}/countries/${listing.country_code}`,{method:'PUT',body:JSON.stringify({referral_rate_override:value})});
+    await calculate();await loadCompetitors();saving(false);toast(value===null?'已恢复按父品类匹配佣金':`全部站点佣金已设为 ${number(value,2)}%`);
+  }catch(error){saving(false,true);toast(error.message)}
+}
 async function toggleSite(code){
   const listing=state.project.listings.find((item)=>item.country_code===code);
   if(listing.selected&&state.project.listings.filter((item)=>item.selected).length===1)return toast('至少保留一个测算站点');
@@ -203,6 +245,8 @@ async function flushDrafts(){
   const draftPrices=Object.fromEntries($$('[data-price]').map((input)=>[input.dataset.price,input.value]));
   await saveProduct();
   if(formValue('category_text').trim()!==sharedCategory())await saveCategory();
+  const commissionDraft=formValue('referral_rate_override');
+  if((commissionDraft===''?null:Number(commissionDraft))!==(sharedCommissionOverride()===''?null:Number(sharedCommissionOverride())))await saveCommission();
   for(const [code,value] of Object.entries(draftPrices)){
     const listing=state.project.listings.find((item)=>item.country_code===code);
     if(Number(value||0)!==Number(listing?.sale_price||0))await savePrice(code,value);
@@ -227,7 +271,15 @@ async function copySiteProfitTable(){
 }
 
 function bindEvents(){
-  $$('input,select',$('#productFields')).forEach((input)=>input.onchange=()=>{state.pending=input.name==='category_text'?saveCategory():saveProduct()});
+  let commissionSaveTimer;
+  $$('input,select',$('#productFields')).forEach((input)=>{
+    if(input.name==='referral_rate_override'){
+      input.oninput=()=>{clearTimeout(commissionSaveTimer);commissionSaveTimer=setTimeout(()=>{state.pending=saveCommission()},450)};
+      input.onchange=()=>{clearTimeout(commissionSaveTimer);state.pending=saveCommission()};
+      return;
+    }
+    input.onchange=()=>{state.pending=input.name==='category_text'?saveCategory():saveProduct()};
+  });
   $('#projectPicker').onchange=async(event)=>{
     state.project=await api(`/api/projects/${event.target.value}`);state.shareKey=localStorage.getItem(`margingo-embed-key:${state.project.id}`)||newShareKey();localStorage.setItem(`margingo-embed-key:${state.project.id}`,state.shareKey);history.replaceState(null,'',`?project=${state.project.id}`);fillProduct();await calculate();await loadCompetitors();
   };
@@ -245,6 +297,11 @@ function bindEvents(){
   $('#competitorCostForm').onsubmit=saveCompetitorCost;
   $('#resetCompetitorDefaults').onclick=resetCompetitorDefaults;
   $$('[data-close-cost-modal]').forEach((button)=>button.onclick=closeCostModal);
+  syncChannel?.addEventListener('message',(event)=>{
+    if(event.data?.source!=='site-card'||Number(event.data.projectId)!==Number(state.project?.id))return;
+    clearTimeout(state.syncTimer);state.syncTimer=setTimeout(async()=>{try{state.project=await api(`/api/projects/${state.project.id}`);await refreshProjects();fillProduct();await calculate();await loadCompetitors()}catch{}},180);
+  });
+  window.addEventListener('storage',(event)=>{if(!['margingo-github-pages-v1','margingo-sync-pulse'].includes(event.key))return;clearTimeout(state.syncTimer);state.syncTimer=setTimeout(async()=>{try{state.project=await api(`/api/projects/${state.project.id}`);await refreshProjects();fillProduct();await calculate();await loadCompetitors()}catch{}},180)});
 }
 
 initialize().catch((error)=>{console.error(error);toast(`加载失败：${error.message}`);$('#resultRows').innerHTML=`<tr><td class="empty-row" colspan="8">${escapeHtml(error.message)}</td></tr>`});
