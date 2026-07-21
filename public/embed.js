@@ -1,6 +1,6 @@
 'use strict';
 
-const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},activeCompetitorSiteCode:'',competitorExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',shareKey:'',saving:0,pending:Promise.resolve()};
+const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},activeCompetitorSiteCode:'',competitorExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',manualCountryCode:'',clearCountryCode:'',shareKey:'',saving:0,pending:Promise.resolve()};
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
@@ -203,8 +203,22 @@ async function copyCompetitorStats(){
   if(!data.length)throw new Error('暂无可复制的竞品统计');
   await writeRows(data);toast(`已复制 ${data.length} 个站点的前三竞品统计（不含列名）`);
 }
-async function addCompetitor(code){
-  saving(true);try{await flushDrafts();await api(`/api/projects/${state.project.id}/competitors`,{method:'POST',body:JSON.stringify({country_code:code})});await loadCompetitors();saving(false)}catch(error){saving(false,true);toast(error.message)}
+function addCompetitor(code){
+  const country=state.bootstrap.countries.find((item)=>item.code===code);if(!country)return;
+  state.manualCountryCode=code;const form=$('#manualCompetitorForm');form.reset();
+  $('#manualCompetitorSubtitle').textContent=`${country.flag} ${marketCode(code)} · ${country.name}`;
+  $$('[data-manual-currency]',form).forEach((item)=>item.textContent=country.currency);
+  $('#manualCompetitorModal').hidden=false;form.elements.namedItem('name').focus();
+}
+function closeManualCompetitor(){$('#manualCompetitorModal').hidden=true;state.manualCountryCode=''}
+async function saveManualCompetitor(event){
+  event.preventDefault();const code=state.manualCountryCode;const country=state.bootstrap.countries.find((item)=>item.code===code);if(!code||!country)return;
+  const form=event.currentTarget;const value=(name)=>form.elements.namedItem(name).value.trim();const numeric=(name)=>Number(value(name))||0;
+  const usd=state.bootstrap.countries.find((item)=>item.code==='US');const localRevenue=numeric('monthly_revenue_local');
+  const payload={country_code:code,name:value('name'),asin:value('asin'),sale_price:numeric('sale_price'),monthly_sales:numeric('monthly_sales'),monthly_revenue_local:localRevenue,
+    monthly_revenue_usd:code==='US'?localRevenue:(Number(country.cny_per_local)&&Number(usd?.cny_per_local)?localRevenue*Number(country.cny_per_local)/Number(usd.cny_per_local):0),
+    rating:value('rating')===''?null:numeric('rating'),product_url:value('product_url'),image_url:value('image_url')};
+  closeManualCompetitor();saving(true);try{await flushDrafts();await api(`/api/projects/${state.project.id}/competitors`,{method:'POST',body:JSON.stringify(payload)});await loadCompetitors();saving(false);toast(`已添加 ${marketCode(code)} 手动竞品${localRevenue?'，已按月销售额重新排序':'；月销售额为 0，可能排在前五之外'}`)}catch(error){saving(false,true);toast(error.message)}
 }
 async function saveCompetitor(id,changes){
   saving(true);try{await api(`/api/competitors/${id}`,{method:'PUT',body:JSON.stringify(changes)});await loadCompetitors();saving(false)}catch(error){saving(false,true);toast(error.message)}
@@ -212,10 +226,15 @@ async function saveCompetitor(id,changes){
 async function deleteCompetitor(id){
   saving(true);try{await api(`/api/competitors/${id}`,{method:'DELETE'});await loadCompetitors();saving(false);toast('已删除竞品数据')}catch(error){saving(false,true);toast(error.message)}
 }
-async function clearCompetitors(code){
-  const country=state.bootstrap.countries.find((item)=>item.code===code);const total=Number(state.competitorCounts[code]||0);
-  if(!total||!confirm(`确定清除 ${marketCode(code)} ${country.name} 的全部 ${total} 条竞品数据吗？`))return;
-  saving(true);try{const result=await api(`/api/projects/${state.project.id}/competitors?country_code=${encodeURIComponent(code)}`,{method:'DELETE'});await loadCompetitors();saving(false);toast(`已清除 ${result.deleted} 条竞品数据`)}catch(error){saving(false,true);toast(error.message)}
+function clearCompetitors(code){
+  const country=state.bootstrap.countries.find((item)=>item.code===code);const total=Number(state.competitorCounts[code]||0);if(!country||!total)return;
+  state.clearCountryCode=code;$('#competitorClearMessage').textContent=`确定清除 ${marketCode(code)} ${country.name} 的全部 ${total} 条竞品数据吗？`;
+  $('#competitorClearModal').hidden=false;$('#confirmCompetitorClear').focus();
+}
+function cancelCompetitorClear(){$('#competitorClearModal').hidden=true;state.clearCountryCode=''}
+async function confirmCompetitorClear(){
+  const code=state.clearCountryCode;if(!code)return;cancelCompetitorClear();saving(true);
+  try{const result=await api(`/api/projects/${state.project.id}/competitors?country_code=${encodeURIComponent(code)}`,{method:'DELETE'});await loadCompetitors();saving(false);toast(`已清除 ${result.deleted} 条竞品数据`)}catch(error){saving(false,true);toast(error.message)}
 }
 function openCostModal(id){
   const item=state.competitors.find((row)=>row.id===id);if(!item)return;state.editingCompetitorId=id;const form=$('#competitorCostForm');
@@ -351,6 +370,10 @@ function bindEvents(){
   $('#competitorExcelInput').onchange=importCompetitorExcel;
   $('#competitorGroups').onclick=(event)=>{const imported=event.target.closest('[data-import-competitors]');if(imported)return beginCompetitorImport(imported.dataset.importCompetitors);const copy=event.target.closest('[data-copy-competitors]');if(copy)return copyCompetitorTable(copy.dataset.copyCompetitors).catch((error)=>toast(error.message));const add=event.target.closest('[data-add-competitor]');if(add)return addCompetitor(add.dataset.addCompetitor);const clear=event.target.closest('[data-clear-competitors]');if(clear)return clearCompetitors(clear.dataset.clearCompetitors);const cost=event.target.closest('[data-competitor-cost]');if(cost)return openCostModal(Number(cost.dataset.competitorCost));const remove=event.target.closest('[data-delete-competitor]');if(remove)return deleteCompetitor(Number(remove.dataset.deleteCompetitor))};
   $('#competitorCostForm').onsubmit=saveCompetitorCost;
+  $('#manualCompetitorForm').onsubmit=saveManualCompetitor;
+  $$('[data-close-manual-competitor]').forEach((button)=>button.onclick=closeManualCompetitor);
+  $('#confirmCompetitorClear').onclick=confirmCompetitorClear;
+  $$('[data-cancel-competitor-clear]').forEach((button)=>button.onclick=cancelCompetitorClear);
   $('#resetCompetitorDefaults').onclick=resetCompetitorDefaults;
   $$('[data-close-cost-modal]').forEach((button)=>button.onclick=closeCostModal);
   syncChannel?.addEventListener('message',(event)=>{

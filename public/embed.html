@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>MarginGo · 飞书卡片版</title>
-  <link rel="stylesheet" href="./embed.css?v=20260721-3">
+  <link rel="stylesheet" href="./embed.css?v=20260721-4">
 </head>
 <body>
   <main class="embed-shell">
@@ -60,6 +60,24 @@
     </footer>
   </main>
   <input id="competitorExcelInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+  <div class="competitor-modal" id="manualCompetitorModal" hidden>
+    <div class="competitor-modal-backdrop" data-close-manual-competitor></div>
+    <form class="competitor-modal-card" id="manualCompetitorForm">
+      <div class="competitor-modal-head"><div><b>手动添加竞品</b><small id="manualCompetitorSubtitle"></small></div><button type="button" class="modal-close" data-close-manual-competitor aria-label="关闭">×</button></div>
+      <div class="manual-competitor-grid">
+        <label class="field manual-wide"><span>产品名称</span><input name="name" required maxlength="1000" placeholder="请输入竞品名称"></label>
+        <label class="field"><span>ASIN</span><input name="asin" maxlength="32" placeholder="例如：B0XXXXXXXX"></label>
+        <label class="field"><span>售价（<i data-manual-currency></i>）</span><input name="sale_price" type="number" min="0" step="0.01" required></label>
+        <label class="field"><span>月销量</span><input name="monthly_sales" type="number" min="0" step="1"></label>
+        <label class="field"><span>月销售额（<i data-manual-currency></i>）</span><input name="monthly_revenue_local" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>评分</span><input name="rating" type="number" min="0" max="5" step="0.1"></label>
+        <label class="field manual-wide"><span>商品链接</span><input name="product_url" type="url" placeholder="https://..."></label>
+        <label class="field manual-wide"><span>图片 URL</span><input name="image_url" type="url" placeholder="https://..."></label>
+      </div>
+      <p class="cost-tip">成本、重量、尺寸和品类默认跟随当前产品，可在添加后通过利润率旁的成本按钮单独修改。</p>
+      <div class="modal-actions"><button type="button" class="ghost-button" data-close-manual-competitor>取消</button><button type="submit" class="copy-button">添加竞品</button></div>
+    </form>
+  </div>
   <div class="competitor-modal" id="competitorCostModal" hidden>
     <div class="competitor-modal-backdrop" data-close-cost-modal></div>
     <form class="competitor-modal-card" id="competitorCostForm">
@@ -83,11 +101,20 @@
       <div class="modal-actions"><button type="button" class="ghost-button" data-cancel-project-delete>取消</button><button type="button" class="copy-button danger-confirm-button" id="confirmProjectDelete">确认删除</button></div>
     </div>
   </div>
+  <div class="competitor-modal" id="competitorClearModal" hidden>
+    <div class="competitor-modal-backdrop" data-cancel-competitor-clear></div>
+    <div class="competitor-modal-card project-delete-card" role="dialog" aria-modal="true" aria-labelledby="competitorClearTitle">
+      <div class="competitor-modal-head"><div><b id="competitorClearTitle">清除竞品数据</b><small>仅清除当前站点</small></div><button type="button" class="modal-close" data-cancel-competitor-clear aria-label="关闭">×</button></div>
+      <p class="project-delete-message" id="competitorClearMessage"></p>
+      <p class="cost-tip">清除后无法恢复，其他站点和产品数据不受影响。</p>
+      <div class="modal-actions"><button type="button" class="ghost-button" data-cancel-competitor-clear>取消</button><button type="button" class="copy-button danger-confirm-button" id="confirmCompetitorClear">确认清除</button></div>
+    </div>
+  </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="./config.js"></script>
   <script src="./dimensions.js"></script>
   <script src="./exceljs.min.js"></script>
-  <script src="./competitor-import.js?v=20260721-3"></script>
-  <script src="./embed.js?v=20260721-3"></script>
+  <script src="./competitor-import.js?v=20260721-4"></script>
+  <script src="./embed.js?v=20260721-4"></script>
 </body>
 </html>
