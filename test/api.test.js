@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { server,matchCommission } = require('../server');
 
-test('???????????????????', () => {
+test('未命中具体品类时按站点使用其他类别佣金', () => {
   assert.equal(matchCommission('US','Health & Household',30).rule.rate,15);
   assert.equal(matchCommission('AU','Health & Household',30).rule.rate,15);
   assert.equal(matchCommission('AE','Health & Household',100).rule.rate,10);
@@ -17,7 +17,7 @@ test('???????????????????', () => {
   assert.equal(matchCommission('ZZ','Unknown Category',30).matched,false);
 });
 
-test('????????????? FBA ???????', async (t) => {
+test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async (t) => {
   await new Promise((resolve) => server.listen(0,'127.0.0.1',resolve));
   const address=server.address();
   const base=`http://127.0.0.1:${address.port}`;
@@ -31,7 +31,7 @@ test('????????????? FBA ???????', async (t) => {
   const commissions=await (await fetch(`${base}/api/rules/commission`)).json();
   let projectId=bootstrap.projects[0]?.id;
   if (!projectId) {
-    const fallbackResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'????????'})});
+    const fallbackResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'接口测试基础项目'})});
     assert.equal(fallbackResponse.status,201);
     const fallbackProject=await fallbackResponse.json();
     projectId=fallbackProject.id;
@@ -60,12 +60,12 @@ test('????????????? FBA ???????', async (t) => {
 
   const missing=await fetch(`${base}/api/projects/99999999`);
   assert.equal(missing.status,404);
-  const createdResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'????????'})});
+  const createdResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'自动测试临时项目'})});
   assert.equal(createdResponse.status,201);
   const created=await createdResponse.json();
   try {
-    const updated=await (await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'???????',cost_cny:115,weight:2,image_data:'data:image/png;base64,dGVzdA=='})})).json();
-    assert.equal(updated.name,'???????');
+    const updated=await (await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'已更新临时项目',cost_cny:115,weight:2,image_data:'data:image/png;base64,dGVzdA=='})})).json();
+    assert.equal(updated.name,'已更新临时项目');
     assert.equal(updated.weight,2);
     assert.equal(updated.image_data,'data:image/png;base64,dGVzdA==');
     const listingUpdate=await (await fetch(`${base}/api/projects/${created.id}/countries/JP`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({selected:true,sale_price:7000,category_text:'Unknown Category',customs_rate:5})})).json();
@@ -88,8 +88,8 @@ test('????????????? FBA ???????', async (t) => {
     assert.equal(competitor.cost_cny,115);
     assert.equal(competitor.uses_project_defaults,1);
     assert.equal(competitor.profit_rate,null);
-    const savedCompetitor=await (await fetch(`${base}/api/competitors/${competitor.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'?? A',sale_price:6500,cost_cny:88})})).json();
-    assert.equal(savedCompetitor.name,'?? A');
+    const savedCompetitor=await (await fetch(`${base}/api/competitors/${competitor.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'竞品 A',sale_price:6500,cost_cny:88})})).json();
+    assert.equal(savedCompetitor.name,'竞品 A');
     assert.equal(savedCompetitor.cost_cny,88);
     assert.equal(savedCompetitor.uses_project_defaults,0);
     assert.equal(typeof savedCompetitor.profit_rate,'number');
@@ -104,7 +104,7 @@ test('????????????? FBA ???????', async (t) => {
     assert.equal(competitorList.competitors[0].id,competitor.id);
     assert.equal((await fetch(`${base}/api/competitors/${competitor.id}`,{method:'DELETE'})).status,200);
     assert.equal((await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors.length,0);
-    const importPayload={country_code:'JP',rows:[{asin:'B0IMPORT01',name:'????',sale_price:6200,image_url:'https://example.com/a.jpg',product_url:'https://amazon.co.jp/dp/B0IMPORT01',is_fba:true,has_aplus:false,has_video:true,listing_date:'2025-01-01',monthly_sales:320,monthly_revenue_local:1984000,monthly_revenue_usd:13300,rating:4.5,category_text:'Consumer Electronics',length:30,width:20,height:10,dimension_unit:'cm',weight:0.8,weight_unit:'kg',source_format:'seller_sprite',source_row:2}]};
+    const importPayload={country_code:'JP',rows:[{asin:'B0IMPORT01',name:'导入竞品',sale_price:6200,image_url:'https://example.com/a.jpg',product_url:'https://amazon.co.jp/dp/B0IMPORT01',is_fba:true,has_aplus:false,has_video:true,listing_date:'2025-01-01',monthly_sales:320,monthly_revenue_local:1984000,monthly_revenue_usd:13300,rating:4.5,category_text:'Consumer Electronics',length:30,width:20,height:10,dimension_unit:'cm',weight:0.8,weight_unit:'kg',source_format:'seller_sprite',source_row:2}]};
     const imported=await (await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(importPayload)})).json();
     assert.deepEqual(imported,{imported:1,created:1,updated:0,discarded:0});
     let importedRow=(await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors[0];
@@ -116,9 +116,9 @@ test('????????????? FBA ???????', async (t) => {
     importedRow=(await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors[0];
     assert.equal(importedRow.cost_cny,77);assert.equal(importedRow.sale_price,6400);assert.equal(importedRow.weight,1.1);assert.equal(importedRow.uses_project_defaults,0);assert.equal(importedRow.calculation.fba_fee,0);
     assert.equal((await fetch(`${base}/api/competitors/${importedRow.id}`,{method:'DELETE'})).status,200);
-    const manualUnion=await (await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',name:'????',sale_price:5000})})).json();
+    const manualUnion=await (await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',name:'手动竞品',sale_price:5000})})).json();
     assert.ok(manualUnion.id);
-    const makeImportedRow=(index)=>({asin:`b0union${String(index).padStart(3,'0')}`,name:`????? ${index}`,sale_price:1000+index,monthly_sales:index,monthly_revenue_local:index*1000,category_text:'Home & Kitchen',source_format:'helium10',source_row:index+2});
+    const makeImportedRow=(index)=>({asin:`b0union${String(index).padStart(3,'0')}`,name:`关键词竞品 ${index}`,sale_price:1000+index,monthly_sales:index,monthly_revenue_local:index*1000,category_text:'Home & Kitchen',source_format:'helium10',source_row:index+2});
     const firstUnion=await (await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:Array.from({length:35},(_,index)=>makeImportedRow(index))})})).json();
     assert.deepEqual(firstUnion,{imported:30,created:30,updated:0,discarded:5});
     let unionList=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();

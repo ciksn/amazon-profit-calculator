@@ -19,7 +19,7 @@
   async function baseRules() {
     if (!cache.rules) {
       const result = await nativeFetch('./data/rules.json',{ cache:'no-cache' });
-      if (!result.ok) throw new Error('??????????');
+      if (!result.ok) throw new Error('基础规则文件加载失败');
       cache.rules = await result.json();
     }
     return cache.rules;
@@ -46,14 +46,14 @@
 
   async function matchCommission(countryCode,text,salePrice = 0) {
     const rules = (await rowsFor('commission')).filter((row) => row.country_code === countryCode);
-    const normalized = String(text || '').toLowerCase().replace(/[&/??|]/g,' ');
+    const normalized = String(text || '').toLowerCase().replace(/[&/，、|]/g,' ');
     let best = null; let bestScore = 0; let fallback = null;
     for (const rule of rules) {
       const price = Number(salePrice) || 0;
       if (rule.min_price != null && price < Number(rule.min_price)) continue;
       if (rule.max_price != null && price > Number(rule.max_price)) continue;
       const name = String(rule.parent_category || '').toLowerCase();
-      if (name.includes('other') || name.includes('??') || name.includes('??')) { fallback ||= rule; continue; }
+      if (name.includes('other') || name.includes('其他') || name.includes('其它')) { fallback ||= rule; continue; }
       const terms = `${rule.parent_category},${rule.keywords}`.toLowerCase().split(/[,/]/).map((item) => item.trim()).filter(Boolean);
       const score = terms.reduce((sum,term) => sum + (normalized.includes(term) ? Math.max(1,term.length) : 0),0);
       if (score > bestScore) { best = rule; bestScore = score; }
@@ -154,47 +154,47 @@
 
   function normalizeHs(value) {
     const digits = String(value || '').replace(/\D/g,'');
-    if (![6,9,10].includes(digits.length)) throw new Error('????? 10 ? HS ??');
+    if (![6,9,10].includes(digits.length)) throw new Error('请输入国内 10 位 HS 编码');
     const chapter = Number(digits.slice(0,2));
-    if (chapter < 1 || chapter > 97 || chapter === 77) throw new Error('HS ??????');
+    if (chapter < 1 || chapter > 97 || chapter === 77) throw new Error('HS 编码章节无效');
     return digits;
   }
 
   function chooseTariff(row,preference) {
     if (preference === 'rcep') {
-      if (row.chinaRcep?.percent != null) return { ...row.chinaRcep,type:'?? RCEP' };
-      return { text:row.chinaRcep?.text || '',percent:null,type:'?? RCEP',warning:'????????????? RCEP ?????' };
+      if (row.chinaRcep?.percent != null) return { ...row.chinaRcep,type:'中国 RCEP' };
+      return { text:row.chinaRcep?.text || '',percent:null,type:'中国 RCEP',warning:'该税目没有可直接换算的中国 RCEP 百分比税率' };
     }
-    const selected = [['WTO/MFN',row.wto],['????',row.temporary],['????',row.general]].find(([,rate]) => rate?.percent != null);
+    const selected = [['WTO/MFN',row.wto],['临时税率',row.temporary],['一般税率',row.general]].find(([,rate]) => rate?.percent != null);
     return selected ? { ...selected[1],type:selected[0] }
-      : { text:row.wto?.text || row.temporary?.text || row.general?.text || '',percent:null,type:'??????',warning:'??????????????????' };
+      : { text:row.wto?.text || row.temporary?.text || row.general?.text || '',percent:null,type:'普通适用税率',warning:'该税目不是单一百分比税率，请人工确认' };
   }
 
   async function lookupTariff(body) {
     const normalized = normalizeHs(body.hs_code);
-    if ((body.origin_country || 'CN') !== 'CN') throw new Error('??????????????');
+    if ((body.origin_country || 'CN') !== 'CN') throw new Error('第一版暂时仅支持中国原产商品');
     const preference = body.preference || 'unknown'; const chapter = normalized.slice(0,2);
     let manifest = cache.tariff.get('manifest');
     if (!manifest) {
       const result = await nativeFetch('./data/japan-tariff/manifest.json',{ cache:'no-cache' });
-      if (!result.ok) throw new Error('?????????????? GitHub Pages ??????');
+      if (!result.ok) throw new Error('日本税则数据尚未生成，请等待 GitHub Pages 更新任务完成');
       manifest = await result.json(); cache.tariff.set('manifest',manifest);
     }
     let rows = cache.tariff.get(chapter);
     if (!rows) {
       const result = await nativeFetch(`./data/japan-tariff/${chapter}.json`,{ cache:'no-cache' });
-      if (!result.ok) throw new Error(`????? ${chapter} ?????`);
+      if (!result.ok) throw new Error(`日本税则第 ${chapter} 章尚未同步`);
       rows = await result.json(); cache.tariff.set(chapter,rows);
     }
     const matchingHs6 = normalized.slice(0,6);
     let matches = rows.filter((row) => normalized.length === 9 ? row.code === normalized : row.hs6 === matchingHs6);
     if (normalized.length !== 9 && matches.some((row) => row.statisticalCode)) matches = matches.filter((row) => row.statisticalCode);
     matches = matches.filter((row,index,array) => array.findIndex((item) => item.code === row.code) === index);
-    if (!matches.length) throw new Error('???????????????? 6 ??????');
+    if (!matches.length) throw new Error('日本官方税则中未找到该国内编码前 6 位对应的税目');
     const candidates = matches.map((row) => {
       const rate = chooseTariff(row,preference === 'unknown' ? 'none' : preference);
       return { code:row.code,description:row.description,rate:rate.percent,rateText:rate.text,rateType:rate.type,
-        warning:rate.warning || (preference === 'unknown' ? '????????????????' : '') };
+        warning:rate.warning || (preference === 'unknown' ? '优惠资格未知，暂按非优惠税率建议' : '') };
     });
     const candidate = candidates.length === 1 && candidates[0].rate != null ? candidates[0] : null;
     return { status:candidate ? 'matched':'needs_confirmation',inputCode:normalized,matchingHs6,originCountry:'CN',preference,
@@ -210,22 +210,22 @@
     }
     if (method === 'POST' && path === '/api/projects') {
       const body = readBody(options); const now = new Date().toISOString(); const id = local.nextProjectId++;
-      const project = { id,name:body.name || '?????',cost_cny:0,length:0,width:0,height:0,dimension_unit:'cm',weight:0,weight_unit:'kg',image_data:'',created_at:now,updated_at:now };
+      const project = { id,name:body.name || '未命名品类',cost_cny:0,length:0,width:0,height:0,dimension_unit:'cm',weight:0,weight_unit:'kg',image_data:'',created_at:now,updated_at:now };
       local.projects.push(project); for (const country of await countries()) local.listings[`${id}:${country.code}`] = blankListing(id,country);
       save(); return json(201,await getProject(id));
     }
     const projectMatch = path.match(/^\/api\/projects\/(\d+)$/);
-    if (projectMatch && method === 'GET') { const project = await getProject(projectMatch[1]); return project ? json(200,project):json(404,{ error:'?????' }); }
+    if (projectMatch && method === 'GET') { const project = await getProject(projectMatch[1]); return project ? json(200,project):json(404,{ error:'品类不存在' }); }
     if (projectMatch && method === 'PUT') {
       const project = local.projects.find((item) => Number(item.id) === Number(projectMatch[1]));
-      if (!project) return json(404,{ error:'?????' });
+      if (!project) return json(404,{ error:'品类不存在' });
       Object.assign(project,readBody(options),{ updated_at:new Date().toISOString() }); save(); return json(200,await getProject(project.id));
     }
     if (projectMatch && method === 'DELETE') {
       const id = Number(projectMatch[1]); const before = local.projects.length; local.projects = local.projects.filter((item) => Number(item.id) !== id);
       for (const key of Object.keys(local.listings)) if (key.startsWith(`${id}:`)) delete local.listings[key];
       local.competitors = local.competitors.filter((item) => Number(item.project_id) !== id);
-      save(); return before === local.projects.length ? json(404,{ error:'?????' }):json(200,{ ok:true });
+      save(); return before === local.projects.length ? json(404,{ error:'品类不存在' }):json(200,{ ok:true });
     }
     const listingMatch = path.match(/^\/api\/projects\/(\d+)\/countries\/([A-Z]{2})$/);
     if (listingMatch && method === 'PUT') {
@@ -235,10 +235,10 @@
     }
     const competitorImportMatch = path.match(/^\/api\/projects\/(\d+)\/competitors\/import$/);
     if (competitorImportMatch && method === 'POST') {
-      const project=await getProject(competitorImportMatch[1]);if(!project)return json(404,{ error:'?????' });
+      const project=await getProject(competitorImportMatch[1]);if(!project)return json(404,{ error:'品类不存在' });
       const body=readBody(options);const countryCode=String(body.country_code||'').toUpperCase();const listing=project.listings.find((item)=>item.country_code===countryCode);
-      if(!listing)return json(400,{ error:'?????' });
-      if(!Array.isArray(body.rows)||!body.rows.length)return json(400,{ error:'Excel ???????????' });
+      if(!listing)return json(400,{ error:'站点不存在' });
+      if(!Array.isArray(body.rows)||!body.rows.length)return json(400,{ error:'Excel 中没有可导入的竞品数据' });
       const rows=body.rows.slice(0,30);const discarded=Math.max(0,body.rows.length-rows.length);let created=0;let updated=0;
       for(const source of rows){const row=importedCompetitorValues(source);const existing=local.competitors.find((item)=>Number(item.project_id)===Number(project.id)&&item.country_code===countryCode&&((row.asin&&String(item.asin||'').toUpperCase()===row.asin)||(row.product_url&&item.product_url===row.product_url)));
         if(existing){Object.assign(existing,row,Object.fromEntries(competitorParameterImportFields.map((key)=>[key,row[key]])),{uses_project_defaults:0,updated_at:new Date().toISOString()});updated+=1}else{local.competitors.push(newCompetitorRow(project,listing,row,true));created+=1}}
@@ -247,21 +247,21 @@
     const competitorListMatch = path.match(/^\/api\/projects\/(\d+)\/competitors$/);
     if (competitorListMatch && method === 'GET') return json(200,{ competitors:await listCompetitors(competitorListMatch[1]),competitor_counts:competitorCounts(competitorListMatch[1]) });
     if (competitorListMatch && method === 'POST') {
-      const project = await getProject(competitorListMatch[1]); if (!project) return json(404,{ error:'?????' });
+      const project = await getProject(competitorListMatch[1]); if (!project) return json(404,{ error:'品类不存在' });
       const body = readBody(options); const listing = project.listings.find((item) => item.country_code === body.country_code);
-      if (!listing) return json(400,{ error:'?????' });
+      if (!listing) return json(400,{ error:'站点不存在' });
       const row=newCompetitorRow(project,listing,body);
       local.competitors.push(row); save(); return json(201,await calculateCompetitor(row));
     }
     if (competitorListMatch && method === 'DELETE') {
-      const projectId=Number(competitorListMatch[1]);const project=await getProject(projectId);if(!project)return json(404,{ error:'?????' });
+      const projectId=Number(competitorListMatch[1]);const project=await getProject(projectId);if(!project)return json(404,{ error:'品类不存在' });
       const countryCode=String(new URL(url,location.href).searchParams.get('country_code')||'').toUpperCase();const before=local.competitors.length;
       local.competitors=local.competitors.filter((item)=>Number(item.project_id)!==projectId||(countryCode&&item.country_code!==countryCode));
       save();return json(200,{ok:true,deleted:before-local.competitors.length});
     }
     const competitorMatch = path.match(/^\/api\/competitors\/(\d+)$/);
     if (competitorMatch && method === 'PUT') {
-      const row = local.competitors.find((item) => Number(item.id) === Number(competitorMatch[1])); if (!row) return json(404,{ error:'?????' });
+      const row = local.competitors.find((item) => Number(item.id) === Number(competitorMatch[1])); if (!row) return json(404,{ error:'竞品不存在' });
       const body = readBody(options); const parameterFields = ['cost_cny','length','width','height','dimension_unit','weight','weight_unit','category_text'];
       if (parameterFields.some((key) => Object.hasOwn(body,key)) && !Object.hasOwn(body,'uses_project_defaults')) body.uses_project_defaults = 0;
       Object.assign(row,body,{ uses_project_defaults:Number(Boolean(body.uses_project_defaults ?? row.uses_project_defaults)),updated_at:new Date().toISOString() });
@@ -269,12 +269,12 @@
     }
     if (competitorMatch && method === 'DELETE') {
       const id = Number(competitorMatch[1]); const before = local.competitors.length; local.competitors = local.competitors.filter((item) => Number(item.id) !== id);
-      save(); return before === local.competitors.length ? json(404,{ error:'?????' }):json(200,{ ok:true });
+      save(); return before === local.competitors.length ? json(404,{ error:'竞品不存在' }):json(200,{ ok:true });
     }
     if (method === 'POST' && path === '/api/commission/match') { const body = readBody(options); return json(200,await matchCommission(body.country_code,body.text,body.sale_price)); }
     if (method === 'POST' && path === '/api/tariffs/japan/lookup') return json(200,await lookupTariff(readBody(options)));
     if (method === 'POST' && path === '/api/calculate') {
-      const body = readBody(options); const project = await getProject(body.project_id); if (!project) return json(404,{ error:'?????' });
+      const body = readBody(options); const project = await getProject(body.project_id); if (!project) return json(404,{ error:'品类不存在' });
       const activeCountries = await countries(); const fba = await rowsFor('fba'); const sizes = await rowsFor('sizes'); const freight = await rowsFor('freight');
       const listings = body.country_code ? project.listings.filter((item) => item.country_code === body.country_code) : project.listings.filter((item) => item.selected);
       const results = listings.map((listing) => {
@@ -297,26 +297,26 @@
     if (itemMatch && method === 'PUT') {
       const key = `${itemMatch[1]}:${decodeURIComponent(itemMatch[2])}`; local.overrides[key] = { ...(local.overrides[key] || {}),...readBody(options) }; save(); return json(200,{ ok:true });
     }
-    return json(404,{ error:'?????' });
+    return json(404,{ error:'接口不存在' });
   }
 
   window.fetch = async (url,options) => {
     const target = typeof url === 'string' ? url:url.url;
     if (!new URL(target,location.href).pathname.includes('/api/')) return nativeFetch(url,options);
-    try { return await route(target,options); } catch (error) { return json(500,{ error:error.message || '?????????' }); }
+    try { return await route(target,options); } catch (error) { return json(500,{ error:error.message || '浏览器本地计算异常' }); }
   };
 
   window.addEventListener('DOMContentLoaded',() => {
     const foot = document.querySelector('.sidebar-foot'); if (!foot) return;
     const tools = document.createElement('div'); tools.className = 'static-data-tools';
-    tools.innerHTML = '<button type="button" id="exportLocalData">????</button><button type="button" id="importLocalData">????</button><input id="importLocalFile" type="file" accept="application/json" hidden>';
+    tools.innerHTML = '<button type="button" id="exportLocalData">导出备份</button><button type="button" id="importLocalData">导入数据</button><input id="importLocalFile" type="file" accept="application/json" hidden>';
     foot.before(tools);
     const style = document.createElement('style'); style.textContent = '.static-data-tools{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:10px 8px}.static-data-tools button{padding:7px 5px;border:1px solid #e2e2e5;border-radius:8px;background:#fff;color:#777;font-size:10px}.static-data-tools button:hover{border-color:#ff9b54;color:#e86509}'; document.head.append(style);
     document.querySelector('#exportLocalData').onclick = () => { const blob = new Blob([JSON.stringify(local,null,2)],{ type:'application/json' });
-      const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `MarginGo??-${new Date().toISOString().slice(0,10)}.json`; link.click(); URL.revokeObjectURL(link.href); };
+      const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `MarginGo备份-${new Date().toISOString().slice(0,10)}.json`; link.click(); URL.revokeObjectURL(link.href); };
     const input = document.querySelector('#importLocalFile'); document.querySelector('#importLocalData').onclick = () => input.click();
     input.onchange = async () => { try { const imported = JSON.parse(await input.files[0].text());
-      if (imported?.version !== 1 || !Array.isArray(imported.projects)) throw new Error('???????');
+      if (imported?.version !== 1 || !Array.isArray(imported.projects)) throw new Error('备份格式不正确');
       local = { ...emptyState(),...imported }; save(); location.reload(); } catch (error) { alert(error.message); } };
   });
 })();
