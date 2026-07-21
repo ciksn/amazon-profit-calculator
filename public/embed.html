@@ -3,51 +3,51 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>MarginGo · 飞书卡片版</title>
-  <link rel="stylesheet" href="./embed.css?v=20260721-2">
+  <title>MarginGo ? ?????</title>
+  <link rel="stylesheet" href="./embed.css?v=20260721-3">
 </head>
 <body>
   <main class="embed-shell">
     <header class="embed-head">
-      <div class="brand"><span>M</span><div><b>MarginGo</b><small>飞书选品利润卡片</small></div></div>
+      <div class="brand"><span>M</span><div><b>MarginGo</b><small>????????</small></div></div>
       <div class="head-actions">
-        <label class="project-picker"><span>品类</span><select id="projectPicker" aria-label="选择品类"></select></label>
-        <button class="ghost-button" id="newProjectBtn" type="button">新建</button>
-        <button class="ghost-button delete-project-button" id="deleteProjectBtn" type="button">删除</button>
+        <label class="project-picker"><span>??</span><select id="projectPicker" aria-label="????"></select></label>
+        <button class="ghost-button" id="newProjectBtn" type="button">??</button>
+        <button class="ghost-button delete-project-button" id="deleteProjectBtn" type="button">??</button>
       </div>
     </header>
 
     <section class="product-panel" aria-labelledby="productTitle">
-      <div class="section-title"><div><span class="step">01</span><div><b id="productTitle">产品参数</b><small>修改后自动保存并重新计算</small></div></div><span class="save-state" id="saveState">已保存</span></div>
+      <div class="section-title"><div><span class="step">01</span><div><b id="productTitle">????</b><small>????????????</small></div></div><span class="save-state" id="saveState">???</span></div>
       <div class="product-grid" id="productFields">
-        <label class="field field-name"><span>品名</span><input name="name" maxlength="30" placeholder="例如：浴室置物架"></label>
-        <label class="field"><span>成本（CNY）</span><input name="cost_cny" type="number" min="0" step="0.01"></label>
-        <label class="field"><span>重量</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
-        <label class="field field-category"><span>亚马逊父品类</span><input name="category_text" placeholder="例如：Home &amp; Kitchen"></label>
-        <label class="field field-commission"><span>手动佣金（全部站点）</span><div class="percent-input"><input name="referral_rate_override" type="number" min="0" max="100" step="0.1" placeholder="留空自动匹配"><em>%</em></div></label>
-        <div class="field field-size"><div class="field-label-row"><span>长 × 宽 × 高</span><button class="clipboard-dimension-button" id="readDimensionsBtn" type="button">识别剪贴板</button></div><div class="dimension-inputs"><input name="length" data-embed-dimension type="number" min="0" step="0.01" aria-label="产品长度"><i>×</i><input name="width" data-embed-dimension type="number" min="0" step="0.01" aria-label="产品宽度"><i>×</i><input name="height" data-embed-dimension type="number" min="0" step="0.01" aria-label="产品高度"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div><small class="dimension-paste-hint">支持 27.2 × 12.5 × 54 cm；也可直接粘贴到任一尺寸框</small></div>
+        <label class="field field-name"><span>??</span><input name="name" maxlength="30" placeholder="????????"></label>
+        <label class="field"><span>???CNY?</span><input name="cost_cny" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>??</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
+        <label class="field field-category"><span>??????</span><input name="category_text" placeholder="???Home &amp; Kitchen"></label>
+        <label class="field field-commission"><span>??????????</span><div class="percent-input"><input name="referral_rate_override" type="number" min="0" max="100" step="0.1" placeholder="??????"><em>%</em></div></label>
+        <div class="field field-size"><div class="field-label-row"><span>? ? ? ? ?</span><button class="clipboard-dimension-button" id="readDimensionsBtn" type="button">?????</button></div><div class="dimension-inputs"><input name="length" data-embed-dimension type="number" min="0" step="0.01" aria-label="????"><i>?</i><input name="width" data-embed-dimension type="number" min="0" step="0.01" aria-label="????"><i>?</i><input name="height" data-embed-dimension type="number" min="0" step="0.01" aria-label="????"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div><small class="dimension-paste-hint">?? 27.2 ? 12.5 ? 54 cm?????????????</small></div>
       </div>
     </section>
 
     <section class="competitor-panel" aria-labelledby="competitorTitle">
-      <button class="section-title competitor-toggle" id="competitorToggle" type="button" aria-expanded="true" aria-controls="competitorContent"><div><span class="step">02</span><div><b id="competitorTitle">竞品利润率计算与统计</b><small>支持卖家精灵 / H10 Excel；每个站点数据独立，前端显示前 5 条</small></div></div><span class="panel-toggle-label competitor-toggle-label">收起 <i>⌃</i></span></button>
+      <button class="section-title competitor-toggle" id="competitorToggle" type="button" aria-expanded="true" aria-controls="competitorContent"><div><span class="step">02</span><div><b id="competitorTitle">??????????</b><small>?????? / H10 Excel??????????????? 5 ?</small></div></div><span class="panel-toggle-label competitor-toggle-label">?? <i>?</i></span></button>
       <div class="competitor-content" id="competitorContent">
-        <div class="site-tabs competitor-site-tabs" id="competitorSiteTabs" aria-label="选择竞品站点"></div>
+        <div class="site-tabs competitor-site-tabs" id="competitorSiteTabs" aria-label="??????"></div>
         <div class="competitor-groups" id="competitorGroups"></div>
         <div class="competitor-summary">
-          <div class="competitor-summary-title"><div><b>竞品数据统计</b><small>每个站点按录入顺序取前三条有效竞品</small></div><button class="copy-competitor-stats" id="copyCompetitorStatsBtn" type="button">复制统计</button></div>
+          <div class="competitor-summary-title"><div><b>??????</b><small>?????????????????</small></div><button class="copy-competitor-stats" id="copyCompetitorStatsBtn" type="button">????</button></div>
           <div class="competitor-stats" id="competitorStats"></div>
         </div>
       </div>
     </section>
 
     <section class="market-panel" aria-labelledby="marketTitle">
-      <div class="section-title collapsible-title"><button class="section-title-main" id="marketToggle" type="button" aria-expanded="true" aria-controls="marketContent"><span class="step">03</span><span><b id="marketTitle">国家利润测算</b><small>勾选站点并填写当地售价</small></span><span class="panel-toggle-label market-toggle-label">收起 <i>⌃</i></span></button><div class="market-title-actions"><span class="site-count" id="siteCount"></span><button class="site-copy-button" id="copySiteProfitBtn" type="button">复制各站点利润率表格</button></div></div>
+      <div class="section-title collapsible-title"><button class="section-title-main" id="marketToggle" type="button" aria-expanded="true" aria-controls="marketContent"><span class="step">03</span><span><b id="marketTitle">??????</b><small>???????????</small></span><span class="panel-toggle-label market-toggle-label">?? <i>?</i></span></button><div class="market-title-actions"><span class="site-count" id="siteCount"></span><button class="site-copy-button" id="copySiteProfitBtn" type="button">??????????</button></div></div>
       <div class="market-content" id="marketContent">
         <div class="site-tabs" id="siteTabs"></div>
         <div class="result-wrap">
           <table class="result-table">
-            <thead><tr><th>国家</th><th>当地售价</th><th>佣金</th><th>FBA</th><th>头程</th><th>单件利润</th><th>利润率</th><th>操作</th></tr></thead>
+            <thead><tr><th>??</th><th>????</th><th>??</th><th>FBA</th><th>??</th><th>????</th><th>???</th><th>??</th></tr></thead>
             <tbody id="resultRows"></tbody>
           </table>
         </div>
@@ -55,39 +55,39 @@
     </section>
 
     <footer class="embed-foot">
-      <span id="copyHint">行末“复制”按钮可单独复制站点、售价和利润率</span>
-      <a href="./index.html" target="_blank" rel="noopener">打开完整计算器 ↗</a>
+      <span id="copyHint">??????????????????????</span>
+      <a href="./index.html" target="_blank" rel="noopener">??????? ?</a>
     </footer>
   </main>
   <input id="competitorExcelInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
   <div class="competitor-modal" id="competitorCostModal" hidden>
     <div class="competitor-modal-backdrop" data-close-cost-modal></div>
     <form class="competitor-modal-card" id="competitorCostForm">
-      <div class="competitor-modal-head"><div><b>竞品成本参数</b><small id="competitorCostSubtitle"></small></div><button type="button" class="modal-close" data-close-cost-modal aria-label="关闭">×</button></div>
+      <div class="competitor-modal-head"><div><b>??????</b><small id="competitorCostSubtitle"></small></div><button type="button" class="modal-close" data-close-cost-modal aria-label="??">?</button></div>
       <div class="cost-grid">
-        <label class="field cost-size"><span>亚马逊品类</span><input name="category_text" placeholder="例如：Home &amp; Kitchen（用于匹配佣金）"></label>
-        <label class="field"><span>采购成本（CNY）</span><input name="cost_cny" type="number" min="0" step="0.01"></label>
-        <label class="field"><span>重量</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
-        <label class="field cost-size"><span>长 × 宽 × 高</span><div class="dimension-inputs"><input name="length" type="number" min="0" step="0.01"><i>×</i><input name="width" type="number" min="0" step="0.01"><i>×</i><input name="height" type="number" min="0" step="0.01"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div></label>
+        <label class="field cost-size"><span>?????</span><input name="category_text" placeholder="???Home &amp; Kitchen????????"></label>
+        <label class="field"><span>?????CNY?</span><input name="cost_cny" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>??</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
+        <label class="field cost-size"><span>? ? ? ? ?</span><div class="dimension-inputs"><input name="length" type="number" min="0" step="0.01"><i>?</i><input name="width" type="number" min="0" step="0.01"><i>?</i><input name="height" type="number" min="0" step="0.01"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div></label>
       </div>
-      <p class="cost-tip" id="competitorDefaultsState">当前跟随产品参数；保存修改后仅影响此条竞品。</p>
-      <div class="modal-actions"><button type="button" class="ghost-button reset-defaults-button" id="resetCompetitorDefaults">恢复跟随产品</button><span class="modal-action-spacer"></span><button type="button" class="ghost-button" data-close-cost-modal>取消</button><button type="submit" class="copy-button">保存并计算</button></div>
+      <p class="cost-tip" id="competitorDefaultsState">??????????????????????</p>
+      <div class="modal-actions"><button type="button" class="ghost-button reset-defaults-button" id="resetCompetitorDefaults">??????</button><span class="modal-action-spacer"></span><button type="button" class="ghost-button" data-close-cost-modal>??</button><button type="submit" class="copy-button">?????</button></div>
     </form>
   </div>
   <div class="competitor-modal" id="projectDeleteModal" hidden>
     <div class="competitor-modal-backdrop" data-cancel-project-delete></div>
     <div class="competitor-modal-card project-delete-card" role="dialog" aria-modal="true" aria-labelledby="projectDeleteTitle">
-      <div class="competitor-modal-head"><div><b id="projectDeleteTitle">删除品类</b><small>删除后无法恢复</small></div><button type="button" class="modal-close" data-cancel-project-delete aria-label="关闭">×</button></div>
+      <div class="competitor-modal-head"><div><b id="projectDeleteTitle">????</b><small>???????</small></div><button type="button" class="modal-close" data-cancel-project-delete aria-label="??">?</button></div>
       <p class="project-delete-message" id="projectDeleteMessage"></p>
-      <p class="cost-tip">该品类的站点数据和竞品数据也会一起删除。</p>
-      <div class="modal-actions"><button type="button" class="ghost-button" data-cancel-project-delete>取消</button><button type="button" class="copy-button danger-confirm-button" id="confirmProjectDelete">确认删除</button></div>
+      <p class="cost-tip">????????????????????</p>
+      <div class="modal-actions"><button type="button" class="ghost-button" data-cancel-project-delete>??</button><button type="button" class="copy-button danger-confirm-button" id="confirmProjectDelete">????</button></div>
     </div>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="./config.js"></script>
   <script src="./dimensions.js"></script>
   <script src="./exceljs.min.js"></script>
-  <script src="./competitor-import.js?v=20260721-2"></script>
-  <script src="./embed.js?v=20260721-2"></script>
+  <script src="./competitor-import.js?v=20260721-3"></script>
+  <script src="./embed.js?v=20260721-3"></script>
 </body>
 </html>

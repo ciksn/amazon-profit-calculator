@@ -32,10 +32,10 @@ function readBody(req) {
     let raw = '';
     req.on('data', (chunk) => {
       raw += chunk;
-      if (raw.length > 15_000_000) reject(new Error('请求内容过大'));
+      if (raw.length > 15_000_000) reject(new Error('??????'));
     });
     req.on('end', () => {
-      try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('JSON 格式不正确')); }
+      try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('JSON ?????')); }
     });
     req.on('error', reject);
   });
@@ -106,9 +106,9 @@ function calculateCompetitor(row) {
 
 function listCompetitors(projectId) {
   return db.prepare(`SELECT * FROM (
-      SELECT pc.*, ROW_NUMBER() OVER (PARTITION BY country_code ORDER BY id) AS display_rank
+      SELECT pc.*, ROW_NUMBER() OVER (PARTITION BY country_code ORDER BY monthly_revenue_local DESC, id ASC) AS display_rank
       FROM project_competitors pc WHERE project_id = ?
-    ) WHERE display_rank <= 5 ORDER BY country_code, id`).all(projectId).map(calculateCompetitor);
+    ) WHERE display_rank <= 5 ORDER BY country_code, monthly_revenue_local DESC, id ASC`).all(projectId).map(calculateCompetitor);
 }
 function competitorCounts(projectId) {
   return Object.fromEntries(db.prepare('SELECT country_code, COUNT(*) AS count FROM project_competitors WHERE project_id = ? GROUP BY country_code')
@@ -125,7 +125,7 @@ function importedCompetitorValues(body={}) {
   const nullableBoolean=(value)=>value==null?null:Number(Boolean(value));
   const webUrl=(value)=>{const url=short(value);return /^https?:\/\//i.test(url)?url:''};
   return {
-    name:short(body.name,1000),sale_price:numeric(body.sale_price),asin:short(body.asin,32),
+    name:short(body.name,1000),sale_price:numeric(body.sale_price),asin:short(body.asin,32).toUpperCase(),
     image_url:webUrl(body.image_url),product_url:webUrl(body.product_url),is_fba:nullableBoolean(body.is_fba),
     has_aplus:nullableBoolean(body.has_aplus),has_video:nullableBoolean(body.has_video),listing_date:short(body.listing_date,80),
     monthly_sales:numeric(body.monthly_sales),monthly_revenue_local:numeric(body.monthly_revenue_local),
@@ -162,7 +162,7 @@ function bootstrap() {
 
 function matchCommission(countryCode, text, salePrice = 0) {
   const rules = db.prepare('SELECT * FROM commission_rules WHERE country_code = ?').all(countryCode);
-  const normalized = String(text || '').toLowerCase().replace(/[&/，、|]/g, ' ');
+  const normalized = String(text || '').toLowerCase().replace(/[&/??|]/g, ' ');
   let best = null;
   let bestScore = 0;
   let fallback = null;
@@ -171,7 +171,7 @@ function matchCommission(countryCode, text, salePrice = 0) {
     if (rule.min_price != null && price < Number(rule.min_price)) continue;
     if (rule.max_price != null && price > Number(rule.max_price)) continue;
     const fallbackName = String(rule.parent_category || '').toLowerCase();
-    const isFallback = fallbackName.includes('other') || fallbackName.includes('其他') || fallbackName.includes('其它');
+    const isFallback = fallbackName.includes('other') || fallbackName.includes('??') || fallbackName.includes('??');
     if (isFallback) { fallback ||= rule; continue; }
     const terms = `${rule.parent_category},${rule.keywords}`.toLowerCase().split(/[,/]/).map((x) => x.trim()).filter(Boolean);
     const score = terms.reduce((sum, term) => sum + (normalized.includes(term) ? Math.max(1, term.length) : 0), 0);
@@ -190,7 +190,7 @@ async function api(req, res, url) {
     const now = new Date().toISOString();
     const result = db.prepare(`INSERT INTO projects
       (name,cost_cny,length,width,height,dimension_unit,weight,weight_unit,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(body.name || '未命名品类',0,0,0,0,'cm',0,'kg',now,now);
+      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(body.name || '?????',0,0,0,0,'cm',0,'kg',now,now);
     const id = Number(result.lastInsertRowid);
     const stmt = db.prepare('INSERT INTO project_countries (project_id,country_code,selected) VALUES (?,?,?)');
     for (const country of db.prepare('SELECT code FROM countries').all()) stmt.run(id,country.code,country.code === 'AU' ? 1 : 0);
@@ -200,7 +200,7 @@ async function api(req, res, url) {
   const projectMatch = url.pathname.match(/^\/api\/projects\/(\d+)$/);
   if (projectMatch && method === 'GET') {
     const project = getProject(Number(projectMatch[1]));
-    return project ? json(res,200,project) : json(res,404,{ error:'品类不存在' });
+    return project ? json(res,200,project) : json(res,404,{ error:'?????' });
   }
   if (projectMatch && method === 'PUT') {
     const id = Number(projectMatch[1]);
@@ -215,7 +215,7 @@ async function api(req, res, url) {
   if (projectMatch && method === 'DELETE') {
     const id = Number(projectMatch[1]);
     const result = db.prepare('DELETE FROM projects WHERE id = ?').run(id);
-    if (!result.changes) return json(res,404,{ error:'品类不存在' });
+    if (!result.changes) return json(res,404,{ error:'?????' });
     return json(res,200,{ ok:true });
   }
 
@@ -236,17 +236,17 @@ async function api(req, res, url) {
   const competitorImportMatch = url.pathname.match(/^\/api\/projects\/(\d+)\/competitors\/import$/);
   if (competitorImportMatch && method === 'POST') {
     const projectId=Number(competitorImportMatch[1]);const project=getProject(projectId);
-    if(!project)return json(res,404,{ error:'品类不存在' });
+    if(!project)return json(res,404,{ error:'?????' });
     const body=await readBody(req);const countryCode=String(body.country_code||'').toUpperCase();
-    if(!project.listings.some((item)=>item.country_code===countryCode))return json(res,400,{ error:'站点不存在' });
-    if(!Array.isArray(body.rows)||!body.rows.length)return json(res,400,{ error:'Excel 中没有可导入的竞品数据' });
-    if(body.rows.length>10000)return json(res,400,{ error:'单次最多导入 10000 条竞品' });
+    if(!project.listings.some((item)=>item.country_code===countryCode))return json(res,400,{ error:'?????' });
+    if(!Array.isArray(body.rows)||!body.rows.length)return json(res,400,{ error:'Excel ???????????' });
+    const rows=body.rows.slice(0,30);const discarded=Math.max(0,body.rows.length-rows.length);
     let created=0;let updated=0;const now=new Date().toISOString();
     db.exec('BEGIN');
     try {
-      for(const source of body.rows){
+      for(const source of rows){
         const row=importedCompetitorValues(source);let existing=null;
-        if(row.asin)existing=db.prepare('SELECT id FROM project_competitors WHERE project_id = ? AND country_code = ? AND asin = ? ORDER BY id LIMIT 1').get(projectId,countryCode,row.asin);
+        if(row.asin)existing=db.prepare('SELECT id FROM project_competitors WHERE project_id = ? AND country_code = ? AND UPPER(asin) = ? ORDER BY id LIMIT 1').get(projectId,countryCode,row.asin);
         if(!existing&&row.product_url)existing=db.prepare("SELECT id FROM project_competitors WHERE project_id = ? AND country_code = ? AND product_url = ? AND product_url <> '' ORDER BY id LIMIT 1").get(projectId,countryCode,row.product_url);
         if(existing){
           const fields=['name','sale_price',...competitorImportFields,...competitorParameterImportFields];
@@ -257,23 +257,32 @@ async function api(req, res, url) {
       }
       db.exec('COMMIT');
     }catch(error){db.exec('ROLLBACK');throw error}
-    return json(res,200,{ imported:body.rows.length,created,updated });
+    return json(res,200,{ imported:rows.length,created,updated,discarded });
   }
 
   const competitorListMatch = url.pathname.match(/^\/api\/projects\/(\d+)\/competitors$/);
   if (competitorListMatch && method === 'GET') {
     const projectId = Number(competitorListMatch[1]);
-    if (!getProject(projectId)) return json(res,404,{ error:'品类不存在' });
+    if (!getProject(projectId)) return json(res,404,{ error:'?????' });
     return json(res,200,{ competitors:listCompetitors(projectId),competitor_counts:competitorCounts(projectId) });
   }
   if (competitorListMatch && method === 'POST') {
     const projectId = Number(competitorListMatch[1]);
     const project = getProject(projectId);
-    if (!project) return json(res,404,{ error:'品类不存在' });
+    if (!project) return json(res,404,{ error:'?????' });
     const body = await readBody(req);
     const countryCode = String(body.country_code || '').toUpperCase();
-    if (!project.listings.some((item) => item.country_code === countryCode)) return json(res,400,{ error:'站点不存在' });
+    if (!project.listings.some((item) => item.country_code === countryCode)) return json(res,400,{ error:'?????' });
     return json(res,201,calculateCompetitor(insertCompetitor(project,countryCode,body)));
+  }
+  if (competitorListMatch && method === 'DELETE') {
+    const projectId=Number(competitorListMatch[1]);
+    if(!getProject(projectId))return json(res,404,{ error:'?????' });
+    const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();
+    const result=countryCode
+      ? db.prepare('DELETE FROM project_competitors WHERE project_id = ? AND country_code = ?').run(projectId,countryCode)
+      : db.prepare('DELETE FROM project_competitors WHERE project_id = ?').run(projectId);
+    return json(res,200,{ ok:true,deleted:result.changes });
   }
 
   const competitorMatch = url.pathname.match(/^\/api\/competitors\/(\d+)$/);
@@ -289,11 +298,11 @@ async function api(req, res, url) {
     if (fields.length) db.prepare(`UPDATE project_competitors SET ${fields.map((key) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
       .run(...fields.map((key) => key === 'uses_project_defaults' ? Number(Boolean(body[key])) : body[key]),new Date().toISOString(),id);
     const row = db.prepare('SELECT * FROM project_competitors WHERE id = ?').get(id);
-    return row ? json(res,200,calculateCompetitor(row)) : json(res,404,{ error:'竞品不存在' });
+    return row ? json(res,200,calculateCompetitor(row)) : json(res,404,{ error:'?????' });
   }
   if (competitorMatch && method === 'DELETE') {
     const result = db.prepare('DELETE FROM project_competitors WHERE id = ?').run(Number(competitorMatch[1]));
-    return result.changes ? json(res,200,{ ok:true }) : json(res,404,{ error:'竞品不存在' });
+    return result.changes ? json(res,200,{ ok:true }) : json(res,404,{ error:'?????' });
   }
 
   if (method === 'POST' && url.pathname === '/api/commission/match') {
@@ -311,7 +320,7 @@ async function api(req, res, url) {
   if (method === 'POST' && url.pathname === '/api/calculate') {
     const body = await readBody(req);
     const project = getProject(Number(body.project_id));
-    if (!project) return json(res,404,{ error:'品类不存在' });
+    if (!project) return json(res,404,{ error:'?????' });
     const countries = db.prepare('SELECT * FROM countries WHERE active = 1 ORDER BY priority').all();
     const results = [];
     const listings = body.country_code
@@ -352,12 +361,12 @@ async function api(req, res, url) {
       commission:{ table:'commission_rules',key:'id',fields:['parent_category','keywords','rate','min_price','max_price','threshold_price','rate_above','minimum_fee','status','source_note'] }
     }[type];
     const fields = config.fields.filter((key) => Object.hasOwn(body,key));
-    if (!fields.length) return json(res,400,{ error:'没有可更新字段' });
+    if (!fields.length) return json(res,400,{ error:'???????' });
     db.prepare(`UPDATE ${config.table} SET ${fields.map((key) => `${key} = ?`).join(', ')} WHERE ${config.key} = ?`)
       .run(...fields.map((key) => body[key]),id);
     return json(res,200,{ ok:true });
   }
-  return json(res,404,{ error:'接口不存在' });
+  return json(res,404,{ error:'?????' });
 }
 
 const mime = { '.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml' };
@@ -381,11 +390,11 @@ const server = http.createServer(async (req,res) => {
     return staticFile(req,res,url);
   } catch (error) {
     console.error(error);
-    return json(res,500,{ error:error.message || '服务器异常' });
+    return json(res,500,{ error:error.message || '?????' });
   }
 });
 if (require.main === module) {
-  server.listen(PORT,'127.0.0.1',() => console.log(`亚马逊利润工具已启动：http://127.0.0.1:${PORT}`));
+  server.listen(PORT,'127.0.0.1',() => console.log(`???????????http://127.0.0.1:${PORT}`));
 }
 
 module.exports = { server, bootstrap, matchCommission };
