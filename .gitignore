@@ -4,3 +4,15 @@ data/*.db-wal
 node_modules/
 .DS_Store
 *.msi
+.env
+.env.*
+!.env.example
+!deploy/.env.production.example
+.tmp*
+*.log
+coverage/
+config/*.local.json
+.git-empty-backup/
+outputs/
+*.zip
+*-preview.png

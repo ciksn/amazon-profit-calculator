@@ -1,9 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
-const db = require('../lib/db');
 const root = path.resolve(import.meta.dirname,'..');
 const docs = path.join(root,'docs');
 const dataDir = path.join(docs,'data');
@@ -31,10 +27,7 @@ let profit = fs.readFileSync(path.join(root,'lib','profit.js'),'utf8');
 profit = profit.replace(/^'use strict';\s*/,'').replace(/module\.exports\s*=\s*\{([^}]+)\};\s*$/s,'window.MarginGoProfit = {$1};');
 fs.writeFileSync(path.join(docs,'profit-engine.js'),`'use strict';\n(() => {\n${profit}\n})();\n`);
 
+const output = JSON.parse(fs.readFileSync(path.join(dataDir,'rules.json'),'utf8'));
 const tables = ['countries','commission_rules','size_tiers','fba_rules','freight_rules'];
-const output = { generatedAt:new Date().toISOString() };
-for (const table of tables) output[table] = db.prepare(`SELECT * FROM ${table}`).all();
-fs.writeFileSync(path.join(dataDir,'rules.json'),JSON.stringify(output));
-
 console.log(`GitHub Pages 文件已生成：${docs}`);
 console.log(tables.map((table) => `${table}=${output[table].length}`).join(' '));

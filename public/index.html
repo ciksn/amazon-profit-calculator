@@ -14,7 +14,6 @@
       <div class="brand"><span class="brand-mark">M</span><span><b>MarginGo</b><small>全球利润工作台</small></span></div>
       <nav>
         <button class="nav-item active" data-view="calculator"><span>⌁</span>利润计算</button>
-        <button class="nav-item disabled temporarily-hidden" hidden aria-hidden="true"><span>▦</span>产品数据看板<em>下一步</em></button>
         <button class="nav-item" data-view="admin"><span>⚙</span>规则管理</button>
       </nav>
       <div class="sidebar-foot">
@@ -65,6 +64,7 @@
       <form id="productForm" class="compact-form">
         <label class="field"><span>品名</span><input id="modalProjectName" name="name" maxlength="20" placeholder="例如：浴室置物架"></label>
         <label class="field"><span>成本</span><div class="input-affix"><b>¥</b><input name="cost_cny" type="number" min="0" step="0.01"><em>CNY</em></div></label>
+        <label class="field span-2"><span>统一手动佣金（全部站点）</span><div class="input-affix"><input name="referral_rate_override" type="number" min="0" max="100" step="0.1" placeholder="留空保留各站点设置"><em>%</em></div><small class="commission-help">填写后覆盖全部站点佣金；清空后恢复按父品类自动匹配。</small></label>
         <div class="field span-2 product-image-field"><span>商品图片</span><div class="product-image-input" id="productImageInput" tabindex="0"><div class="product-image-preview" id="productImagePreview"><span>图片</span></div><div class="product-image-copy"><b>上传或粘贴图片</b><small>点击选择图片，也可以复制图片后按 Ctrl+V</small><div><button class="secondary-button image-select-button" id="selectProductImage" type="button">选择图片</button><button class="image-remove-button hidden" id="removeProductImage" type="button">移除</button></div></div><input id="productImageFile" type="file" accept="image/*" hidden></div></div>
         <label class="field"><span>尺寸单位</span><select name="dimension_unit"><option value="cm">厘米 cm</option><option value="ft">英尺 ft</option></select></label>
         <label class="field weight-field"><span>重量</span><div class="input-affix"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
@@ -83,6 +83,6 @@
   <div class="toast" id="toast"></div>
   <script src="./config.js"></script>
   <script src="./dimensions.js"></script>
-  <script src="./app.js?v=20260717-6"></script>
+  <script src="./app.js?v=20260721-11"></script>
 </body>
 </html>

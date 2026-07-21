@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+coverage
+outputs
+.tmp*
+*.log
+*.png
+docs/*
+!docs/data/
+!docs/data/**

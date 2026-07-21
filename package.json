@@ -4,14 +4,26 @@
   "private": true,
   "description": "亚马逊多国利润率计算工具",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --env-file-if-exists=.env --watch server.js",
     "build:pages": "node scripts/build_github_pages.mjs",
+    "encrypt:gemini-key": "node scripts/encrypt_gemini_key.mjs",
     "update:japan-tariff": "node scripts/update_japan_tariff.mjs",
-    "test": "node --test",
-    "test:coverage": "node --experimental-test-coverage --test --test-coverage-include=lib/profit.js --test-coverage-include=server.js --test-coverage-lines=95 --test-coverage-branches=90 --test-coverage-functions=95"
+    "test": "cross-env NODE_ENV=test node --test",
+    "test:coverage": "cross-env NODE_ENV=test node --experimental-test-coverage --test --test-coverage-include=lib/profit.js --test-coverage-include=server.js --test-coverage-lines=95 --test-coverage-branches=88 --test-coverage-functions=95"
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@google/genai": "^2.12.0",
+    "cheerio": "^1.2.0",
+    "exceljs": "^4.4.0",
+    "pg": "^8.22.0",
+    "undici": "^7.28.0"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0",
+    "pg-mem": "^3.0.14"
   }
 }

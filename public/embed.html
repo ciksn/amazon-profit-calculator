@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>MarginGo · 飞书卡片版</title>
-  <link rel="stylesheet" href="./embed.css?v=20260720-6">
+  <link rel="stylesheet" href="./embed.css?v=20260721-7">
 </head>
 <body>
   <main class="embed-shell">
@@ -29,25 +29,27 @@
       </div>
     </section>
 
-    <section class="market-panel" aria-labelledby="marketTitle">
-      <div class="section-title"><div><span class="step">02</span><div><b id="marketTitle">国家利润测算</b><small>勾选站点并填写当地售价</small></div></div><div class="market-title-actions"><span class="site-count" id="siteCount"></span><button class="site-copy-button" id="copySiteProfitBtn" type="button">复制各站点利润率表格</button></div></div>
-      <div class="site-tabs" id="siteTabs"></div>
-      <div class="result-wrap">
-        <table class="result-table">
-          <thead><tr><th>国家</th><th>当地售价</th><th>佣金</th><th>FBA</th><th>头程</th><th>单件利润</th><th>利润率</th><th>操作</th></tr></thead>
-          <tbody id="resultRows"></tbody>
-        </table>
-      </div>
-    </section>
-
     <section class="competitor-panel" aria-labelledby="competitorTitle">
-      <button class="section-title competitor-toggle" id="competitorToggle" type="button" aria-expanded="true" aria-controls="competitorContent"><div><span class="step">03</span><div><b id="competitorTitle">竞品利润率计算与统计</b><small>独立选择竞品站点，成本参数可单独调整</small></div></div><span class="competitor-toggle-label">收起 <i>⌃</i></span></button>
+      <button class="section-title competitor-toggle" id="competitorToggle" type="button" aria-expanded="true" aria-controls="competitorContent"><div><span class="step">02</span><div><b id="competitorTitle">竞品利润率计算与统计</b><small>支持卖家精灵 / H10 Excel；每个站点数据独立，前端显示前 5 条</small></div></div><span class="panel-toggle-label competitor-toggle-label">收起 <i>⌃</i></span></button>
       <div class="competitor-content" id="competitorContent">
         <div class="site-tabs competitor-site-tabs" id="competitorSiteTabs" aria-label="选择竞品站点"></div>
         <div class="competitor-groups" id="competitorGroups"></div>
         <div class="competitor-summary">
-          <div class="competitor-summary-title"><b>竞品数据统计</b><small>每个站点按录入顺序取前三条有效竞品</small></div>
+          <div class="competitor-summary-title"><div><b>竞品数据统计</b><small>每个站点按月销售额取前三条有效竞品，平均销售额统一换算为美元</small></div><button class="copy-competitor-stats" id="copyCompetitorStatsBtn" type="button">复制统计</button></div>
           <div class="competitor-stats" id="competitorStats"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="market-panel" aria-labelledby="marketTitle">
+      <div class="section-title collapsible-title"><button class="section-title-main" id="marketToggle" type="button" aria-expanded="true" aria-controls="marketContent"><span class="step">03</span><span><b id="marketTitle">国家利润测算</b><small>勾选站点并填写当地售价</small></span><span class="panel-toggle-label market-toggle-label">收起 <i>⌃</i></span></button><div class="market-title-actions"><span class="site-count" id="siteCount"></span><button class="site-copy-button" id="copySiteProfitBtn" type="button">复制各站点利润率表格</button></div></div>
+      <div class="market-content" id="marketContent">
+        <div class="site-tabs" id="siteTabs"></div>
+        <div class="result-wrap">
+          <table class="result-table">
+            <thead><tr><th>国家</th><th>当地售价</th><th>佣金</th><th>FBA</th><th>头程</th><th>单件利润</th><th>利润率</th><th>操作</th></tr></thead>
+            <tbody id="resultRows"></tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -57,13 +59,31 @@
       <a href="./index.html" target="_blank" rel="noopener">打开完整计算器 ↗</a>
     </footer>
   </main>
+  <input id="competitorExcelInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+  <div class="competitor-modal" id="manualCompetitorModal" hidden>
+    <div class="competitor-modal-backdrop" data-close-manual-competitor></div>
+    <form class="competitor-modal-card" id="manualCompetitorForm">
+      <div class="competitor-modal-head"><div><b>手动添加竞品</b><small id="manualCompetitorSubtitle"></small></div><button type="button" class="modal-close" data-close-manual-competitor aria-label="关闭">×</button></div>
+      <div class="manual-competitor-grid">
+        <label class="field manual-wide"><span>产品名称</span><input name="name" required maxlength="1000" placeholder="请输入竞品名称"></label>
+        <label class="field"><span>ASIN</span><input name="asin" maxlength="32" placeholder="例如：B0XXXXXXXX"></label>
+        <label class="field"><span>售价（<i data-manual-currency></i>）</span><input name="sale_price" type="number" min="0" step="0.01" required></label>
+        <label class="field"><span>月销量</span><input name="monthly_sales" type="number" min="0" step="1"></label>
+        <label class="field"><span>月销售额（<i data-manual-currency></i>）</span><input name="monthly_revenue_local" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>评分</span><input name="rating" type="number" min="0" max="5" step="0.1"></label>
+        <label class="field manual-wide"><span>商品链接</span><input name="product_url" type="url" placeholder="https://..."></label>
+        <label class="field manual-wide"><span>图片 URL</span><input name="image_url" type="url" placeholder="https://..."></label>
+      </div>
+      <p class="cost-tip">成本、重量、尺寸和品类默认跟随当前产品；成本可在表格中直接修改，其他参数可单独调整。</p>
+      <div class="modal-actions"><button type="button" class="ghost-button" data-close-manual-competitor>取消</button><button type="submit" class="copy-button">添加竞品</button></div>
+    </form>
+  </div>
   <div class="competitor-modal" id="competitorCostModal" hidden>
     <div class="competitor-modal-backdrop" data-close-cost-modal></div>
     <form class="competitor-modal-card" id="competitorCostForm">
-      <div class="competitor-modal-head"><div><b>竞品成本参数</b><small id="competitorCostSubtitle"></small></div><button type="button" class="modal-close" data-close-cost-modal aria-label="关闭">×</button></div>
+      <div class="competitor-modal-head"><div><b>竞品尺寸参数</b><small id="competitorCostSubtitle"></small></div><button type="button" class="modal-close" data-close-cost-modal aria-label="关闭">×</button></div>
       <div class="cost-grid">
         <label class="field cost-size"><span>亚马逊品类</span><input name="category_text" placeholder="例如：Home &amp; Kitchen（用于匹配佣金）"></label>
-        <label class="field"><span>采购成本（CNY）</span><input name="cost_cny" type="number" min="0" step="0.01"></label>
         <label class="field"><span>重量</span><div class="input-pair"><input name="weight" type="number" min="0" step="0.001"><select name="weight_unit"><option value="kg">KG</option><option value="lb">LB</option></select></div></label>
         <label class="field cost-size"><span>长 × 宽 × 高</span><div class="dimension-inputs"><input name="length" type="number" min="0" step="0.01"><i>×</i><input name="width" type="number" min="0" step="0.01"><i>×</i><input name="height" type="number" min="0" step="0.01"><select name="dimension_unit"><option value="cm">CM</option><option value="ft">FT</option></select></div></label>
       </div>
@@ -80,9 +100,40 @@
       <div class="modal-actions"><button type="button" class="ghost-button" data-cancel-project-delete>取消</button><button type="button" class="copy-button danger-confirm-button" id="confirmProjectDelete">确认删除</button></div>
     </div>
   </div>
+  <div class="competitor-modal" id="competitorClearModal" hidden>
+    <div class="competitor-modal-backdrop" data-cancel-competitor-clear></div>
+    <div class="competitor-modal-card project-delete-card" role="dialog" aria-modal="true" aria-labelledby="competitorClearTitle">
+      <div class="competitor-modal-head"><div><b id="competitorClearTitle">清除竞品数据</b><small>仅清除当前站点</small></div><button type="button" class="modal-close" data-cancel-competitor-clear aria-label="关闭">×</button></div>
+      <p class="project-delete-message" id="competitorClearMessage"></p>
+      <p class="cost-tip">清除后无法恢复，其他站点和产品数据不受影响。</p>
+      <div class="modal-actions"><button type="button" class="ghost-button" data-cancel-competitor-clear>取消</button><button type="button" class="copy-button danger-confirm-button" id="confirmCompetitorClear">确认清除</button></div>
+    </div>
+  </div>
+  <div class="competitor-modal" id="japanTaxModal" hidden>
+    <div class="competitor-modal-backdrop" data-close-japan-tax></div>
+    <form class="competitor-modal-card japan-tax-card" id="japanTaxForm">
+      <div class="competitor-modal-head"><div><b>日本站税项设置</b><small>仅应用于当前品类的日本站，保存后立即重新计算</small></div><button type="button" class="modal-close" data-close-japan-tax aria-label="关闭">×</button></div>
+      <div class="tariff-query-row">
+        <label class="field"><span>国内 10 位 HS 编码</span><input name="customs_hs_code" inputmode="numeric" maxlength="10" placeholder="例如：8543709999"></label>
+        <label class="field"><span>RCEP 优惠资格</span><select name="customs_preference"><option value="unknown">资格未知</option><option value="none">不使用 RCEP</option><option value="rcep">具备 RCEP 证明</option></select></label>
+        <button class="ghost-button japan-lookup-button" id="lookupJapanTaxBtn" type="button">查询日本税率</button>
+      </div>
+      <div class="tariff-lookup-result" id="japanTaxLookupResult">可查询日本海关税率，也可以直接手动填写。</div>
+      <div class="japan-tax-grid">
+        <label class="field"><span>申报比例</span><div class="percent-input"><input name="declaration_ratio" type="number" min="0" max="100" step="0.1"><em>%</em></div></label>
+        <label class="field"><span>申报价（留空自动）</span><div class="price-input japan-declared-value"><span id="japanCurrency">¥</span><input name="declared_value_override" type="number" min="0" step="0.01" placeholder="按售价和申报比例自动计算"></div></label>
+        <label class="field"><span>关税比例</span><div class="percent-input"><input name="customs_rate" type="number" min="0" max="100" step="0.1"><em>%</em></div></label>
+        <label class="field"><span>消费税比例</span><div class="percent-input"><input name="consumption_tax_rate" type="number" min="0" max="100" step="0.1"><em>%</em></div></label>
+      </div>
+      <p class="cost-tip">日本税金 = 申报价 × 关税比例 ＋（申报价 ＋ 关税）× 消费税比例。每个品类单独保存。</p>
+      <div class="modal-actions"><button type="button" class="ghost-button" data-close-japan-tax>取消</button><button type="submit" class="copy-button">保存并重新计算</button></div>
+    </form>
+  </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="./config.js"></script>
   <script src="./dimensions.js"></script>
-  <script src="./embed.js?v=20260720-9"></script>
+  <script src="./exceljs.min.js"></script>
+  <script src="./competitor-import.js?v=20260721-7"></script>
+  <script src="./embed.js?v=20260721-12"></script>
 </body>
 </html>

@@ -9,15 +9,37 @@
 - 每个国家使用独立商品尺寸分段，计算结果会显示该站点匹配到的尺寸段。
 - 税额、产品成本、佣金、FBA、头程和单件利润逐项拆解。
 - 管理员维护税率与汇率、货代价格、FBA 费阶、品类佣金。
-- 本地 SQLite 保存，无需安装数据库或第三方依赖。
+- 前后端版本的品类、站点参数、竞品和规则统一保存到 PostgreSQL，浏览器不再保存业务数据。
+- 服务端主页面、飞书卡片版和单站卡片均采用 GitHub Pages 最新前端；保留竞品 Excel 导入与统计，不包含个人利润率看板。
+- 飞书卡片版可对当前站点月销售额前五名竞品批量抓取 Amazon 五点，并用 Gemini 一次性生成卖点与差异化短语；结果直接保存到 PostgreSQL。
 
 ## 启动
 
-电脑需要 Node.js 22 或更高版本。在本目录运行：
+电脑需要 Node.js 22 或更高版本，以及本机安装的 PostgreSQL 14 或更高版本。先用 PostgreSQL 自带的 `createdb` 创建数据库：
+
+```powershell
+npm install
+& 'C:\Program Files\PostgreSQL\17\bin\createdb.exe' -U postgres -h 127.0.0.1 margingo
+Copy-Item .env.example .env
+```
+
+编辑 `.env`，把 `YOUR_POSTGRES_PASSWORD` 替换为本机 PostgreSQL 的 `postgres` 密码。需要使用竞品卖点分析时，运行 `npm run encrypt:gemini-key`，在隐藏输入框中填写 Google AI Studio 密钥；脚本只把 AES-256-GCM 密文写入 `.env`，并显示一次解密主密钥。把主密钥保存到密码管理器，再通过本机环境变量或云平台 Secret 注入：
+
+```powershell
+$env:GEMINI_KEY_ENCRYPTION_KEY='加密脚本显示的主密钥'
+```
+
+本机启用了 Windows 系统代理时，后端会自动用于 Gemini 请求。云服务器若需要代理，可设置 `GEMINI_HTTPS_PROXY=http://代理地址:端口`；默认单次请求超时为 45 秒，可通过 `GEMINI_TIMEOUT_MS` 调整，临时网络错误默认最多重试 2 次，可通过 `GEMINI_MAX_RETRIES` 调整。
+
+同一份 `.env` 密文和同一解密主密钥可部署到其他服务器，不绑定 Windows 用户。不要把解密主密钥写进 `.env`、代码或 Git。默认模型为高性价比的稳定版 `gemini-3.1-flash-lite`。然后启动：
 
 ```powershell
 npm.cmd start
 ```
+
+打开：<http://127.0.0.1:4173>。服务端直接连接 `127.0.0.1:5432` 上的本地 PostgreSQL。首次启动会自动建表，并从固定规则快照初始化国家、佣金、尺寸、FBA 和头程规则；已有数据库不会被覆盖。
+
+`GET /api/health` 可用于确认服务端与本地数据库连接正常。
 
 ## 自动测试
 
@@ -26,15 +48,7 @@ npm.cmd test
 npm.cmd run test:coverage
 ```
 
-覆盖率命令会同时执行全部测试，并强制利润引擎与接口层达到：行覆盖率至少 95%、分支覆盖率至少 90%、函数覆盖率至少 95%。未达到门槛时命令直接失败。
-
-然后打开：<http://127.0.0.1:4173>
-
-运行自动化测试：
-
-```powershell
-npm.cmd test
-```
+覆盖率命令会同时执行全部测试，并强制利润引擎与接口层达到：行覆盖率至少 95%、分支覆盖率至少 88%、函数覆盖率至少 95%。未达到门槛时命令直接失败。
 
 ## 当前计算口径
 
@@ -62,14 +76,21 @@ npm.cmd test
 
 ## GitHub Pages 版本
 
-`docs/` 是可以直接部署的纯静态版本，不依赖 Node 或 SQLite。FBA、佣金、尺寸和国家规则位于 `docs/data/rules.json`；运营创建的品类和规则修改保存在当前浏览器，并可通过页面左侧的“导出备份 / 导入数据”迁移。
+`docs/` 仍是原先可以直接部署的纯静态版本，继续使用 `docs/data/rules.json` 和浏览器本地数据，不连接 PostgreSQL。本次前后端改造不会修改该目录内已经上线的页面和数据机制。
 
 ```powershell
 npm.cmd run build:pages
 python -m http.server 4174 --directory docs
 ```
 
-`.github/workflows/deploy-pages.yml` 会在推送到 `main`、手动运行及每日定时任务中重新抓取日本海关税则并部署 Pages。当前仓库同时保留 `public/`、`server.js`、`lib/` 和 SQLite 版，便于本地管理或后续恢复服务端模式。日本海关英文税则仅供测算参考，最终税率以报关认定为准。
+`.github/workflows/deploy-pages.yml` 仍可部署 Pages。Pages 构建只读取现有静态规则快照，不会连接或改写 PostgreSQL；服务端版由 `public/`、`server.js` 和 `lib/db.js` 独立运行。日本海关英文税则仅供测算参考，最终税率以报关认定为准。
+
+## 交付与部署
+
+- 云服务器部署、环境变量、Nginx、HTTPS、备份与升级步骤见 [`DEPLOYMENT.md`](./DEPLOYMENT.md)。
+- “所有业务数据仅使用 PostgreSQL”的检查范围与结论见 [`BUSINESS_DATA_AUDIT.md`](./BUSINESS_DATA_AUDIT.md)。
+- Docker Compose 交付文件位于 `deploy/`；其中只包含应用和 PostgreSQL，不依赖 Redis 或其他缓存服务。
+- 不要在服务端交付过程中运行 `npm run build:pages`，以免生成与原 GitHub Pages 有关的静态文件变更。
 
 ## 数据准确性说明
 
