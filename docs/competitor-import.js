@@ -1,0 +1,99 @@
+'use strict';
+
+((root,factory)=>{
+  const api=factory();
+  if(typeof module==='object'&&module.exports)module.exports=api;
+  else root.MarginGoCompetitorImport=api;
+})(typeof globalThis!=='undefined'?globalThis:this,()=>{
+  const text=(value)=>{
+    if(value==null)return '';
+    if(value instanceof Date)return value.toISOString().slice(0,10);
+    if(typeof value==='object'){
+      if(value.result!=null)return text(value.result);
+      if(value.text!=null)return text(value.text);
+      if(value.hyperlink)return text(value.text||value.hyperlink);
+      if(Array.isArray(value.richText))return value.richText.map((item)=>item.text||'').join('');
+    }
+    return String(value).trim();
+  };
+  const number=(value)=>{
+    if(typeof value==='number')return Number.isFinite(value)?value:0;
+    const normalized=text(value).replace(/[,，￥¥$€£A-Z]/gi,'').replace(/\s/g,'');
+    const parsed=Number(normalized);return Number.isFinite(parsed)?parsed:0;
+  };
+  const headerKey=(value)=>text(value).toLowerCase().replace(/[\s_（）()\-—:/：]/g,'');
+  const headerIndex=(headers)=>new Map(headers.map((header,index)=>[headerKey(header),index]));
+  const findColumn=(headers,names=[],pattern=null)=>{
+    const lookup=headerIndex(headers);
+    for(const name of names){const index=lookup.get(headerKey(name));if(index!=null)return index}
+    if(pattern){const index=headers.findIndex((header)=>pattern.test(text(header)));if(index>=0)return index}
+    return -1;
+  };
+  const valueAt=(row,index)=>index<0?'':row[index];
+  const yesNo=(value)=>{
+    const normalized=text(value).toLowerCase();
+    if(['y','yes','是','有','true','1'].includes(normalized))return true;
+    if(['n','no','否','无','false','0'].includes(normalized))return false;
+    return null;
+  };
+  const isFba=(value)=>/\bfba\b/i.test(text(value));
+  const detectFormat=(headers)=>{
+    const keys=new Set(headers.map(headerKey));
+    if(keys.has(headerKey('商品主图'))&&keys.has(headerKey('商品详情页链接')))return 'seller_sprite';
+    if(keys.has(headerKey('图片 URL'))&&keys.has(headerKey('URL'))&&keys.has(headerKey('月销售额')))return 'helium10';
+    return '';
+  };
+  const compact=(value,max=4000)=>text(value).slice(0,max);
+  const webUrl=(value)=>{const url=compact(value);return /^https?:\/\//i.test(url)?url:''};
+  const usdAmount=(localAmount,headers,revenueIndex,context)=>{
+    const header=text(headers[revenueIndex]);
+    const isUsd=context.countryCode==='US'||/usd/i.test(header)||/^月销售额\(\$\)$/i.test(header.replace(/\s/g,''));
+    if(isUsd)return localAmount;
+    const localRate=Number(context.countryCnyPerLocal)||0;const usdRate=Number(context.usdCnyPerLocal)||0;
+    return localRate>0&&usdRate>0?localAmount*localRate/usdRate:0;
+  };
+  function parseRows(headers,rows,context={}){
+    const format=detectFormat(headers);
+    if(!format)throw new Error('未识别 Excel 格式，请使用卖家精灵或 H10 产品导出文件');
+    const column=(names,pattern)=>findColumn(headers,names,pattern);
+    const indexes=format==='seller_sprite'?{
+      asin:column(['ASIN']),name:column(['商品标题']),url:column(['商品详情页链接']),image:column(['商品主图']),
+      price:column(['价格($)','价格']),fulfillment:column(['配送方式']),aplus:column(['A+页面']),video:column(['视频介绍']),
+      listed:column(['上架时间']),sales:column(['月销量']),revenue:column([],/^月销售额/),rating:column(['评分'])
+    }:{
+      asin:column(['ASIN']),name:column(['标题']),url:column(['URL']),image:column(['图片 URL']),price:column(['价格']),
+      fulfillment:column(['配送方式']),aplus:column(['A+页面']),video:column(['视频介绍']),listed:column(['上架时间']),
+      age:column(['年龄（月）']),sales:column(['月销量']),revenue:column(['月销售额']),rating:column(['评论评分'])
+    };
+    return rows.map((row,rowOffset)=>{
+      const localRevenue=number(valueAt(row,indexes.revenue));
+      const age=number(valueAt(row,indexes.age));
+      const listed=compact(valueAt(row,indexes.listed),80)||(age?`约 ${number(valueAt(row,indexes.age))} 个月`:'');
+      return {
+        asin:compact(valueAt(row,indexes.asin),32),name:compact(valueAt(row,indexes.name),1000),
+        product_url:webUrl(valueAt(row,indexes.url)),image_url:webUrl(valueAt(row,indexes.image)),
+        sale_price:number(valueAt(row,indexes.price)),is_fba:isFba(valueAt(row,indexes.fulfillment)),
+        has_aplus:yesNo(valueAt(row,indexes.aplus)),has_video:yesNo(valueAt(row,indexes.video)),
+        listing_date:listed,monthly_sales:number(valueAt(row,indexes.sales)),monthly_revenue_local:localRevenue,
+        monthly_revenue_usd:usdAmount(localRevenue,headers,indexes.revenue,context),rating:number(valueAt(row,indexes.rating))||null,
+        source_format:format,source_row:rowOffset+2
+      };
+    }).filter((row)=>row.asin||row.name||row.product_url).filter((row)=>row.sale_price||row.monthly_sales||row.monthly_revenue_local);
+  }
+  async function parseWorkbook(buffer,ExcelJS,context={}){
+    if(!ExcelJS?.Workbook)throw new Error('Excel 解析组件未加载，请刷新页面后重试');
+    const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(buffer);
+    for(const worksheet of workbook.worksheets){
+      const maxHeaderRow=Math.min(20,worksheet.actualRowCount||20);
+      for(let rowNumber=1;rowNumber<=maxHeaderRow;rowNumber+=1){
+        const headers=worksheet.getRow(rowNumber).values.slice(1).map(text);
+        if(!detectFormat(headers))continue;
+        const rows=[];
+        for(let dataRow=rowNumber+1;dataRow<=worksheet.actualRowCount;dataRow+=1)rows.push(worksheet.getRow(dataRow).values.slice(1));
+        return {format:detectFormat(headers),rows:parseRows(headers,rows,context),sheetName:worksheet.name};
+      }
+    }
+    throw new Error('未识别 Excel 格式，请使用卖家精灵或 H10 产品导出文件');
+  }
+  return {detectFormat,parseRows,parseWorkbook};
+});

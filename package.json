@@ -6,6 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "start:dashboard": "node dashboard/server.js",
+    "dev:dashboard": "node --watch dashboard/server.js",
+    "db:migrate": "node dashboard/migrate.js",
+    "db:import:sqlite": "node scripts/import-sqlite-to-postgres.js",
+    "sync:datapool": "node scripts/sync-datapool-to-postgres.js",
     "build:pages": "node scripts/build_github_pages.mjs",
     "update:japan-tariff": "node scripts/update_japan_tariff.mjs",
     "test": "node --test",
@@ -13,5 +18,9 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "pg": "^8.16.3"
   }
 }

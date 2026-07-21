@@ -277,6 +277,8 @@ body.modal-open { overflow: hidden; }
 .site-toggle:hover { color:#717177; background:#f3f3f5; }
 .site-toggle.active { color:#202023; background:#eeeeF0; font-weight:900; }
 .category-row-actions { display:flex; align-items:center; padding-right:9px; }
+.add-dashboard { height:32px; padding:0 11px; margin-right:5px; border:1px solid #ffd3b3; border-radius:9px; background:#fff7f1; color:var(--orange); font-size:11px; font-weight:700; cursor:pointer; white-space:nowrap; }
+.add-dashboard:hover { background:var(--orange); border-color:var(--orange); color:#fff; box-shadow:0 5px 14px rgba(255,105,0,.18); }
 .copy-category { height:32px; padding:0 9px; margin-right:5px; border:1px solid #e3e3e7; border-radius:9px; background:#fff; color:#6f7077; font-size:10px; font-weight:700; cursor:pointer; white-space:nowrap; }
 .copy-category:hover { border-color:#ffc79e; background:#fff7f1; color:var(--orange); }
 .delete-category,.edit-category { border:0; background:transparent; color:#a5a5aa; }
@@ -287,8 +289,8 @@ body.modal-open { overflow: hidden; }
 .edit-category { height:32px; min-width:48px; padding:0 11px; margin-left:5px; border:1px solid #e5e5e8; border-radius:9px; background:#f7f7f8; font-size:11px; font-weight:700; transition:.2s ease; }
 .edit-category:hover { background:#fff7f1; border-color:#ffc79e; color:var(--orange); box-shadow:0 5px 14px rgba(255,105,0,.1); transform:translateY(-1px); }
 
-.market-table { min-width:870px; border-top:1px solid #ebebed; background:#fcfcfd; }
-.market-table-head,.market-data-row { display:grid; grid-template-columns:minmax(104px,.9fr) minmax(102px,.85fr) minmax(92px,.8fr) minmax(96px,.8fr) minmax(96px,.8fr) minmax(95px,.8fr) minmax(92px,.8fr) minmax(72px,.65fr) minmax(64px,.55fr); gap:9px; align-items:center; }
+.market-table { min-width:940px; border-top:1px solid #ebebed; background:#fcfcfd; }
+.market-table-head,.market-data-row { display:grid; grid-template-columns:minmax(104px,.9fr) minmax(102px,.85fr) minmax(92px,.8fr) minmax(96px,.8fr) minmax(96px,.8fr) minmax(95px,.8fr) minmax(92px,.8fr) minmax(72px,.65fr) minmax(64px,.55fr) minmax(52px,.45fr); gap:9px; align-items:center; }
 .market-table-head { min-height:30px; padding:0 15px; background:#f5f5f6; color:#a0a0a5; font-size:9px; font-weight:700; }
 .market-data-row { min-height:57px; padding:7px 15px; border-top:1px solid #efeff1; background:#fff; }
 .market-data-row:first-of-type { border-top:0; }
@@ -317,6 +319,8 @@ body.modal-open { overflow: hidden; }
 .listing-settings { justify-self:end; min-width:34px; height:29px; padding:0 7px; border:1px solid #e6e6e9; border-radius:8px; background:#fff; color:#888; font-size:9px; font-weight:700; white-space:nowrap; }
 .listing-settings:hover { border-color:#cfcfd3; color:#222; }
 .listing-settings.special { border-color:#ffd5b6; background:#fff6ef; color:var(--orange); }
+.row-copy-button { height:29px; padding:0 9px; border:1px solid #ffc79e; border-radius:8px; background:#fff7f1; color:var(--orange); font-size:10px; font-weight:750; cursor:pointer; white-space:nowrap; }
+.row-copy-button:hover { background:var(--orange); border-color:var(--orange); color:#fff; }
 .no-market-row { padding:17px; border-top:1px solid var(--line); color:#aaa; background:#fafafa; text-align:center; font-size:11px; }
 .empty-categories { padding:70px 20px; border:1px dashed #d7d7db; border-radius:14px; color:#777; text-align:center; background:#fff; }
 .empty-category-icon { width:42px; height:42px; display:grid; place-items:center; margin:0 auto 12px; border-radius:13px; color:var(--orange); background:var(--orange-soft); font-size:24px; }
@@ -577,6 +581,12 @@ body.modal-open { overflow: hidden; }
   visibility: visible;
   transform: translateY(0);
 }
+
+/* Manual commission fallback and per-result calculation explanation */
+.commission-help { margin-top:5px; color:#999; font-size:10px; line-height:1.45; }
+.profit-rate-cell { position:relative; padding-right:20px; }
+.profit-info { position:absolute; right:0; top:-3px; width:15px; height:15px; display:grid; place-items:center; border:1px solid #d7d7dc; border-radius:50%; background:#fff; color:#8d8e96; font-size:9px; font-weight:800; font-style:normal; line-height:1; cursor:help; }
+.profit-info:hover,.profit-info:focus { border-color:#ffad70; background:#fff4eb; color:var(--orange); outline:0; }
 
 .weight-metric:last-child:nth-child(odd) {
   grid-column: span 2;

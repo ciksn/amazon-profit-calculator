@@ -1,6 +1,6 @@
 'use strict';
 
-const state={bootstrap:null,project:null,results:[],competitors:[],activeCompetitorSiteCode:'',competitorExpanded:true,editingCompetitorId:null,shareKey:'',saving:0,pending:Promise.resolve()};
+const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},activeCompetitorSiteCode:'',competitorExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',shareKey:'',saving:0,pending:Promise.resolve()};
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
@@ -127,7 +127,7 @@ function renderResults(){
 }
 
 async function loadCompetitors(){
-  const payload=await api(`/api/projects/${state.project.id}/competitors`);state.competitors=payload.competitors||[];renderCompetitors();
+  const payload=await api(`/api/projects/${state.project.id}/competitors`);state.competitors=payload.competitors||[];state.competitorCounts=payload.competitor_counts||{};renderCompetitors();
 }
 function renderCompetitorSiteTabs(){
   $('#competitorSiteTabs').innerHTML=state.bootstrap.countries.map((country)=>`<button class="site-tab ${state.activeCompetitorSiteCode===country.code?'active':''}" type="button" data-competitor-country="${country.code}" aria-pressed="${state.activeCompetitorSiteCode===country.code}">${country.flag} ${marketCode(country.code)}</button>`).join('');
@@ -136,15 +136,34 @@ function renderCompetitorSiteTabs(){
 function toggleCompetitorSite(code){
   state.activeCompetitorSiteCode=code;renderCompetitors();
 }
+function competitorRowsFor(code){return state.competitors.filter((item)=>item.country_code===code)}
+function yesNoLabel(value){return value==null?'—':Number(value)?'是':'否'}
+function competitorImage(item){return item.image_url?`<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.name||item.asin||'竞品')}" loading="lazy" referrerpolicy="no-referrer">`:'<span>无图</span>'}
+function competitorRow(item,country){
+  const rateClass=item.profit_rate==null?'':Number(item.profit_rate)>=0?'positive':'negative';
+  return `<tr title="${escapeHtml(item.name||item.asin||'竞品')}">
+    <td class="competitor-image">${competitorImage(item)}</td>
+    <td><label class="competitor-price"><span>${escapeHtml(country.symbol)}</span><input type="number" min="0" step="0.01" data-competitor-price="${item.id}" value="${item.sale_price||''}" placeholder="0.00"></label><span class="competitor-name-hint">${escapeHtml(item.name||item.asin||'未命名竞品')}</span></td>
+    <td class="competitor-flag">${yesNoLabel(item.is_fba)}</td><td>${yesNoLabel(item.has_aplus)}</td><td>${yesNoLabel(item.has_video)}</td>
+    <td>${escapeHtml(item.listing_date||'—')}</td>
+    <td class="competitor-link">${item.product_url?`<a href="${escapeHtml(item.product_url)}" target="_blank" rel="noopener">${escapeHtml(item.asin||'打开商品')}</a>`:'—'}</td>
+    <td class="competitor-number">${number(item.monthly_sales,0)}</td>
+    <td class="competitor-number">${escapeHtml(country.symbol)}${number(item.monthly_revenue_local,2)}</td>
+    <td class="competitor-number">$${number(item.monthly_revenue_usd,2)}</td>
+    <td class="competitor-number">${item.rating==null?'—':number(item.rating,1)}</td>
+    <td class="profit-rate-cell competitor-profit ${rateClass}"><b>${item.profit_rate==null?'—':`${number(item.profit_rate,1)}%`}</b>${profitInfoIcon(item.calculation)}<button class="cost-button" type="button" data-competitor-cost="${item.id}">${item.uses_project_defaults?'跟随产品':'独立成本'} · ¥${number(item.cost_cny)}</button></td>
+    <td><div class="competitor-actions"><button class="delete-competitor" type="button" data-delete-competitor="${item.id}">删除</button></div></td>
+  </tr>`;
+}
 function renderCompetitors(){
   renderCompetitorSiteTabs();const selected=state.bootstrap.countries.filter((country)=>country.code===state.activeCompetitorSiteCode);
   if(!selected.length){$('#competitorGroups').innerHTML='<div class="competitor-stats-empty">暂无可用竞品站点</div>';renderCompetitorStats();return}
   $('#competitorGroups').innerHTML=selected.map((country)=>{
-    const rows=state.competitors.filter((item)=>item.country_code===country.code);
-    const body=rows.length?rows.map((item)=>`<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}</td><td><input class="competitor-input" data-competitor-name="${item.id}" maxlength="50" value="${escapeHtml(item.name)}" placeholder="输入竞品名称"></td><td><label class="competitor-price"><span>${escapeHtml(country.symbol)}</span><input type="number" min="0" step="0.01" data-competitor-price="${item.id}" value="${item.sale_price||''}" placeholder="0.00"></label></td><td><button class="cost-button" type="button" data-competitor-cost="${item.id}">${item.uses_project_defaults?'跟随':'独立'} · ¥${number(item.cost_cny)}</button></td><td class="profit-rate-cell ${item.profit_rate==null?'':Number(item.profit_rate)>=0?'positive':'negative'}"><b>${item.profit_rate==null?'—':`${number(item.profit_rate,1)}%`}</b>${profitInfoIcon(item.calculation)}</td><td><button class="delete-competitor" type="button" data-delete-competitor="${item.id}">删除</button></td></tr>`).join(''):'<tr><td class="competitor-empty" colspan="6">暂无竞品，点击右上角添加</td></tr>';
-    return `<div class="competitor-site"><div class="competitor-site-head"><div><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><small>${rows.length} 条竞品</small></div><button class="add-competitor" type="button" data-add-competitor="${country.code}">+ 添加竞品</button></div><div class="competitor-table-wrap"><table class="competitor-table"><thead><tr><th>站点</th><th>产品名</th><th>售价</th><th>成本</th><th>利润率</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+    const rows=competitorRowsFor(country.code);const visible=rows.slice(0,5);const total=Number(state.competitorCounts[country.code]??rows.length);
+    const body=visible.length?visible.map((item)=>competitorRow(item,country)).join(''):'<tr><td class="competitor-empty" colspan="13">暂无竞品，可手动添加或导入 Excel</td></tr>';
+    const sourceNames=[...new Set(rows.map((item)=>item.source_format).filter(Boolean).map((value)=>value==='seller_sprite'?'卖家精灵':value==='helium10'?'H10':value))];
+    return `<div class="competitor-site"><div class="competitor-site-head"><div><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><small>${total} 条竞品</small>${total>5?'<small class="display-limit">前端仅显示前 5 条</small>':''}</div><div class="competitor-site-head-actions"><button class="copy-competitors" type="button" data-copy-competitors="${country.code}" ${visible.length?'':'disabled'}>复制表格</button><button class="import-competitors" type="button" data-import-competitors="${country.code}">导入 Excel</button><button class="add-competitor" type="button" data-add-competitor="${country.code}">+ 手动添加</button></div></div><div class="competitor-table-wrap"><table class="competitor-table"><thead><tr><th>图片</th><th>售价</th><th>是否FBA</th><th>有无A+</th><th>有无视频</th><th>上架时间</th><th>商品链接</th><th>月销量</th><th>月销售额（当地货币）</th><th>月销售额（美元）</th><th>评分</th><th>预计利润率</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></div><div class="competitor-import-note"><b>导入来源：</b>${sourceNames.length?sourceNames.map(escapeHtml).join('、'):'手动录入'}；重复 ASIN 会更新商品数据并保留已修改的独立成本。</div></div>`;
   }).join('');
-  $$('[data-competitor-name]').forEach((input)=>input.onchange=()=>saveCompetitor(input.dataset.competitorName,{name:input.value.trim()}));
   $$('[data-competitor-price]').forEach((input)=>input.onchange=()=>saveCompetitor(input.dataset.competitorPrice,{sale_price:Number(input.value)||0}));
   renderCompetitorStats();
 }
@@ -153,10 +172,28 @@ function renderCompetitorStats(){
   for(const country of state.bootstrap.countries){
     const filled=state.competitors.filter((item)=>item.country_code===country.code&&String(item.name||'').trim()&&Number(item.sale_price)>0&&item.profit_rate!=null);
     if(!filled.length)continue;
-    const firstThree=filled.slice(0,3);const average=firstThree.reduce((sum,item)=>sum+Number(item.profit_rate),0)/firstThree.length;
-    cards.push(`<div class="competitor-stat"><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><span>${number(average,1)}%</span><small>前 ${firstThree.length} 条平均利润率 · 共 ${filled.length} 条有效数据</small></div>`);
+    const firstFive=filled.slice(0,5);const average=firstFive.reduce((sum,item)=>sum+Number(item.profit_rate),0)/firstFive.length;
+    cards.push(`<div class="competitor-stat"><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><span>${number(average,1)}%</span><small>前 ${firstFive.length} 条平均利润率 · 共 ${Number(state.competitorCounts[country.code]??filled.length)} 条数据</small></div>`);
   }
   $('#competitorStats').innerHTML=cards.join('')||'<div class="competitor-stats-empty">填写竞品名称和售价后，将在这里生成站点统计</div>';
+}
+function beginCompetitorImport(code){state.importCountryCode=code;const input=$('#competitorExcelInput');input.value='';input.click()}
+async function importCompetitorExcel(event){
+  const file=event.target.files?.[0];const code=state.importCountryCode;if(!file||!code)return;
+  const country=state.bootstrap.countries.find((item)=>item.code===code);const usd=state.bootstrap.countries.find((item)=>item.code==='US');const button=$(`[data-import-competitors="${code}"]`);
+  if(button)button.disabled=true;saving(true);
+  try{
+    const parsed=await window.MarginGoCompetitorImport.parseWorkbook(await file.arrayBuffer(),window.ExcelJS,{countryCode:code,countryCnyPerLocal:country.cny_per_local,usdCnyPerLocal:usd?.cny_per_local});
+    if(!parsed.rows.length)throw new Error('Excel 中没有可导入的有效产品');
+    const result=await api(`/api/projects/${state.project.id}/competitors/import`,{method:'POST',body:JSON.stringify({country_code:code,rows:parsed.rows})});
+    await loadCompetitors();saving(false);toast(`已导入 ${result.imported} 条：新增 ${result.created}，更新 ${result.updated}`);
+  }catch(error){saving(false,true);toast(error.message)}finally{if(button)button.disabled=false;event.target.value=''}
+}
+async function copyCompetitorTable(code){
+  const country=state.bootstrap.countries.find((item)=>item.code===code);const rows=competitorRowsFor(code).slice(0,5);
+  const headers=['图片','售价','是否FBA','有无A+','有无视频','上架时间','商品链接','月销量','月销售额（当地货币）','月销售额（美元）','评分','预计利润率'];
+  const data=rows.map((item)=>[item.image_url?`=IMAGE("${String(item.image_url).replace(/"/g,'""')}")`:'',`${country.symbol}${number(item.sale_price,2)}`,yesNoLabel(item.is_fba),yesNoLabel(item.has_aplus),yesNoLabel(item.has_video),item.listing_date||'',item.product_url||'',number(item.monthly_sales,0),`${country.symbol}${number(item.monthly_revenue_local,2)}`,`$${number(item.monthly_revenue_usd,2)}`,item.rating==null?'':number(item.rating,1),item.profit_rate==null?'':`${number(item.profit_rate,1)}%`]);
+  await writeRows([headers,...data]);toast(`已复制 ${marketCode(code)} 站前 ${rows.length} 条竞品表格`);
 }
 async function addCompetitor(code){
   saving(true);try{await flushDrafts();await api(`/api/projects/${state.project.id}/competitors`,{method:'POST',body:JSON.stringify({country_code:code})});await loadCompetitors();saving(false)}catch(error){saving(false,true);toast(error.message)}
@@ -198,6 +235,9 @@ async function readDimensionsFromClipboard(){
 function handleDimensionPaste(event){const text=event.clipboardData?.getData('text')||'';const parsed=window.DimensionParser?.parseDimensions(text,formValue('dimension_unit')||'cm');if(!parsed)return;event.preventDefault();applyParsedDimensions(parsed)}
 function toggleCompetitorPanel(){
   state.competitorExpanded=!state.competitorExpanded;const panel=$('.competitor-panel');panel.classList.toggle('collapsed',!state.competitorExpanded);$('#competitorToggle').setAttribute('aria-expanded',String(state.competitorExpanded));$('.competitor-toggle-label').firstChild.textContent=state.competitorExpanded?'收起 ':'展开 ';
+}
+function toggleMarketPanel(){
+  state.marketExpanded=!state.marketExpanded;const panel=$('.market-panel');panel.classList.toggle('collapsed',!state.marketExpanded);$('#marketToggle').setAttribute('aria-expanded',String(state.marketExpanded));$('.market-toggle-label').firstChild.textContent=state.marketExpanded?'收起 ':'展开 ';
 }
 
 async function saveProduct(){
@@ -293,7 +333,9 @@ function bindEvents(){
   $('#readDimensionsBtn').onclick=readDimensionsFromClipboard;
   $$('[data-embed-dimension]').forEach((input)=>input.addEventListener('paste',handleDimensionPaste));
   $('#competitorToggle').onclick=toggleCompetitorPanel;
-  $('#competitorGroups').onclick=(event)=>{const add=event.target.closest('[data-add-competitor]');if(add)return addCompetitor(add.dataset.addCompetitor);const cost=event.target.closest('[data-competitor-cost]');if(cost)return openCostModal(Number(cost.dataset.competitorCost));const remove=event.target.closest('[data-delete-competitor]');if(remove)return deleteCompetitor(Number(remove.dataset.deleteCompetitor))};
+  $('#marketToggle').onclick=toggleMarketPanel;
+  $('#competitorExcelInput').onchange=importCompetitorExcel;
+  $('#competitorGroups').onclick=(event)=>{const imported=event.target.closest('[data-import-competitors]');if(imported)return beginCompetitorImport(imported.dataset.importCompetitors);const copy=event.target.closest('[data-copy-competitors]');if(copy)return copyCompetitorTable(copy.dataset.copyCompetitors).catch((error)=>toast(error.message));const add=event.target.closest('[data-add-competitor]');if(add)return addCompetitor(add.dataset.addCompetitor);const cost=event.target.closest('[data-competitor-cost]');if(cost)return openCostModal(Number(cost.dataset.competitorCost));const remove=event.target.closest('[data-delete-competitor]');if(remove)return deleteCompetitor(Number(remove.dataset.deleteCompetitor))};
   $('#competitorCostForm').onsubmit=saveCompetitorCost;
   $('#resetCompetitorDefaults').onclick=resetCompetitorDefaults;
   $$('[data-close-cost-modal]').forEach((button)=>button.onclick=closeCostModal);

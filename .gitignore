@@ -4,3 +4,6 @@ data/*.db-wal
 node_modules/
 .DS_Store
 *.msi
+config/datapool.local.json
+config/*.secret.json
+.git-empty-backup/
