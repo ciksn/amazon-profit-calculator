@@ -98,7 +98,9 @@
       dimension_unit:follows ? project.dimension_unit : row.dimension_unit,
       weight:follows ? project.weight : row.weight,weight_unit:follows ? project.weight_unit : row.weight_unit };
     const categoryText = follows ? listing.category_text : row.category_text;
-    const competitorListing = { ...listing,sale_price:row.sale_price,category_text:categoryText };
+    const competitorListing = { ...listing,sale_price:row.sale_price,category_text:categoryText,
+      ...(follows ? {} : { referral_rate_override:null,matched_category:'',matched_referral_rate:null,
+        matched_referral_threshold:null,matched_referral_rate_above:null,matched_referral_minimum:0 }) };
     if (competitorListing.referral_rate_override == null && categoryText) {
       const matched = await matchCommission(row.country_code,categoryText,row.sale_price);
       if (matched.matched) Object.assign(competitorListing,{ matched_category:matched.rule.parent_category,
@@ -107,7 +109,7 @@
     }
     const fba = await rowsFor('fba'); const sizes = await rowsFor('sizes'); const freight = await rowsFor('freight');
     const calculated = window.MarginGoProfit.calculateProfit({ project:competitorProject,country,listing:competitorListing,
-      fbaRules:fba.filter((item) => item.country_code === country.code),sizeTiers:sizes.filter((item) => item.country_code === country.code),
+      fbaRules:!follows && row.is_fba === 0 ? [] : fba.filter((item) => item.country_code === country.code),sizeTiers:sizes.filter((item) => item.country_code === country.code),
       freightRule:freight.find((item) => item.country_code === country.code) || null });
     const filled = Boolean(String(row.name || '').trim()) && Number(row.sale_price) > 0;
     return { ...row,cost_cny:competitorProject.cost_cny,length:competitorProject.length,width:competitorProject.width,
@@ -127,6 +129,7 @@
 
   const competitorImportFields=['asin','image_url','product_url','is_fba','has_aplus','has_video','listing_date',
     'monthly_sales','monthly_revenue_local','monthly_revenue_usd','rating','source_format','source_row'];
+  const competitorParameterImportFields=['length','width','height','dimension_unit','weight','weight_unit','category_text'];
   function importedCompetitorValues(body={}) {
     const short=(value,max=4000)=>String(value??'').trim().slice(0,max);const numeric=(value)=>Number.isFinite(Number(value))?Number(value):0;
     const nullableNumber=(value)=>value==null||value===''?null:(Number.isFinite(Number(value))?Number(value):null);
@@ -135,15 +138,17 @@
       product_url:webUrl(body.product_url),is_fba:nullableBoolean(body.is_fba),has_aplus:nullableBoolean(body.has_aplus),
       has_video:nullableBoolean(body.has_video),listing_date:short(body.listing_date,80),monthly_sales:numeric(body.monthly_sales),
       monthly_revenue_local:numeric(body.monthly_revenue_local),monthly_revenue_usd:numeric(body.monthly_revenue_usd),
-      rating:nullableNumber(body.rating),source_format:short(body.source_format,40),source_row:Math.max(0,Math.trunc(numeric(body.source_row))) };
+      rating:nullableNumber(body.rating),source_format:short(body.source_format,40),source_row:Math.max(0,Math.trunc(numeric(body.source_row))),
+      length:numeric(body.length),width:numeric(body.width),height:numeric(body.height),dimension_unit:body.dimension_unit==='ft'?'ft':'cm',
+      weight:numeric(body.weight),weight_unit:body.weight_unit==='lb'?'lb':'kg',category_text:short(body.category_text,500) };
   }
-  function newCompetitorRow(project,listing,body={}) {
+  function newCompetitorRow(project,listing,body={},importedFromExcel=false) {
     const now=new Date().toISOString();const imported=importedCompetitorValues(body);
     return { id:local.nextCompetitorId++,project_id:project.id,country_code:listing.country_code,
       name:imported.name,sale_price:imported.sale_price,cost_cny:Number(body.cost_cny??project.cost_cny)||0,
-      length:Number(body.length??project.length)||0,width:Number(body.width??project.width)||0,height:Number(body.height??project.height)||0,
-      dimension_unit:body.dimension_unit||project.dimension_unit,weight:Number(body.weight??project.weight)||0,
-      weight_unit:body.weight_unit||project.weight_unit,category_text:body.category_text??listing.category_text,uses_project_defaults:1,
+      length:importedFromExcel?imported.length:Number(body.length??project.length)||0,width:importedFromExcel?imported.width:Number(body.width??project.width)||0,height:importedFromExcel?imported.height:Number(body.height??project.height)||0,
+      dimension_unit:importedFromExcel?imported.dimension_unit:(body.dimension_unit||project.dimension_unit),weight:importedFromExcel?imported.weight:Number(body.weight??project.weight)||0,
+      weight_unit:importedFromExcel?imported.weight_unit:(body.weight_unit||project.weight_unit),category_text:importedFromExcel?imported.category_text:(body.category_text??listing.category_text),uses_project_defaults:importedFromExcel?0:1,
       ...Object.fromEntries(competitorImportFields.map((key)=>[key,imported[key]])),created_at:now,updated_at:now };
   }
 
@@ -237,7 +242,7 @@
       if(body.rows.length>10000)return json(400,{ error:'单次最多导入 10000 条竞品' });
       let created=0;let updated=0;
       for(const source of body.rows){const row=importedCompetitorValues(source);const existing=local.competitors.find((item)=>Number(item.project_id)===Number(project.id)&&item.country_code===countryCode&&((row.asin&&item.asin===row.asin)||(row.product_url&&item.product_url===row.product_url)));
-        if(existing){Object.assign(existing,row,{updated_at:new Date().toISOString()});updated+=1}else{local.competitors.push(newCompetitorRow(project,listing,row));created+=1}}
+        if(existing){Object.assign(existing,row,Object.fromEntries(competitorParameterImportFields.map((key)=>[key,row[key]])),{uses_project_defaults:0,updated_at:new Date().toISOString()});updated+=1}else{local.competitors.push(newCompetitorRow(project,listing,row,true));created+=1}}
       save();return json(200,{imported:body.rows.length,created,updated});
     }
     const competitorListMatch = path.match(/^\/api\/projects\/(\d+)\/competitors$/);

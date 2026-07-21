@@ -82,14 +82,16 @@ function calculateCompetitor(row) {
     weight_unit:usesProjectDefaults ? project.weight_unit : row.weight_unit
   };
   const categoryText = usesProjectDefaults ? listing.category_text : row.category_text;
-  const competitorListing = { ...listing, sale_price:row.sale_price, category_text:categoryText };
+  const competitorListing = { ...listing, sale_price:row.sale_price, category_text:categoryText,
+    ...(usesProjectDefaults ? {} : { referral_rate_override:null,matched_category:'',matched_referral_rate:null,
+      matched_referral_threshold:null,matched_referral_rate_above:null,matched_referral_minimum:0 }) };
   if (competitorListing.referral_rate_override == null && competitorListing.category_text) {
     const matched = matchCommission(row.country_code,competitorListing.category_text,row.sale_price);
     if (matched.matched) Object.assign(competitorListing,{ matched_category:matched.rule.parent_category,
       matched_referral_rate:matched.rule.rate, matched_referral_threshold:matched.rule.threshold_price,
       matched_referral_rate_above:matched.rule.rate_above, matched_referral_minimum:matched.rule.minimum_fee || 0 });
   }
-  const fbaRules = db.prepare('SELECT * FROM fba_rules WHERE country_code = ?').all(country.code);
+  const fbaRules = !usesProjectDefaults && row.is_fba === 0 ? [] : db.prepare('SELECT * FROM fba_rules WHERE country_code = ?').all(country.code);
   const sizeTiers = db.prepare('SELECT * FROM size_tiers WHERE country_code = ?').all(country.code);
   const freightRule = db.prepare('SELECT * FROM freight_rules WHERE country_code = ?').get(country.code);
   const calculated = calculateProfit({ project:competitorProject,country,listing:competitorListing,fbaRules,sizeTiers,freightRule });
@@ -115,6 +117,7 @@ function competitorCounts(projectId) {
 
 const competitorImportFields=['asin','image_url','product_url','is_fba','has_aplus','has_video','listing_date',
   'monthly_sales','monthly_revenue_local','monthly_revenue_usd','rating','source_format','source_row'];
+const competitorParameterImportFields=['length','width','height','dimension_unit','weight','weight_unit','category_text'];
 function importedCompetitorValues(body={}) {
   const short=(value,max=4000)=>String(value??'').trim().slice(0,max);
   const numeric=(value)=>Number.isFinite(Number(value))?Number(value):0;
@@ -127,18 +130,20 @@ function importedCompetitorValues(body={}) {
     has_aplus:nullableBoolean(body.has_aplus),has_video:nullableBoolean(body.has_video),listing_date:short(body.listing_date,80),
     monthly_sales:numeric(body.monthly_sales),monthly_revenue_local:numeric(body.monthly_revenue_local),
     monthly_revenue_usd:numeric(body.monthly_revenue_usd),rating:nullableNumber(body.rating),
-    source_format:short(body.source_format,40),source_row:Math.max(0,Math.trunc(numeric(body.source_row)))
+    source_format:short(body.source_format,40),source_row:Math.max(0,Math.trunc(numeric(body.source_row))),
+    length:numeric(body.length),width:numeric(body.width),height:numeric(body.height),dimension_unit:body.dimension_unit==='ft'?'ft':'cm',
+    weight:numeric(body.weight),weight_unit:body.weight_unit==='lb'?'lb':'kg',category_text:short(body.category_text,500)
   };
 }
-function insertCompetitor(project,countryCode,body={}) {
+function insertCompetitor(project,countryCode,body={},importedFromExcel=false) {
   const listing=project.listings.find((item)=>item.country_code===countryCode);const imported=importedCompetitorValues(body);const now=new Date().toISOString();
   const result=db.prepare(`INSERT INTO project_competitors
     (project_id,country_code,name,sale_price,cost_cny,length,width,height,dimension_unit,weight,weight_unit,category_text,uses_project_defaults,
       asin,image_url,product_url,is_fba,has_aplus,has_video,listing_date,monthly_sales,monthly_revenue_local,monthly_revenue_usd,rating,source_format,source_row,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(project.id,countryCode,imported.name,imported.sale_price,
-      Number(body.cost_cny??project.cost_cny)||0,Number(body.length??project.length)||0,Number(body.width??project.width)||0,
-      Number(body.height??project.height)||0,body.dimension_unit||project.dimension_unit,Number(body.weight??project.weight)||0,
-      body.weight_unit||project.weight_unit,body.category_text??listing.category_text,1,
+      Number(body.cost_cny??project.cost_cny)||0,importedFromExcel?imported.length:Number(body.length??project.length)||0,importedFromExcel?imported.width:Number(body.width??project.width)||0,
+      importedFromExcel?imported.height:Number(body.height??project.height)||0,importedFromExcel?imported.dimension_unit:(body.dimension_unit||project.dimension_unit),importedFromExcel?imported.weight:Number(body.weight??project.weight)||0,
+      importedFromExcel?imported.weight_unit:(body.weight_unit||project.weight_unit),importedFromExcel?imported.category_text:(body.category_text??listing.category_text),importedFromExcel?0:1,
       ...competitorImportFields.map((key)=>imported[key]),now,now);
   return db.prepare('SELECT * FROM project_competitors WHERE id = ?').get(Number(result.lastInsertRowid));
 }
@@ -244,10 +249,11 @@ async function api(req, res, url) {
         if(row.asin)existing=db.prepare('SELECT id FROM project_competitors WHERE project_id = ? AND country_code = ? AND asin = ? ORDER BY id LIMIT 1').get(projectId,countryCode,row.asin);
         if(!existing&&row.product_url)existing=db.prepare("SELECT id FROM project_competitors WHERE project_id = ? AND country_code = ? AND product_url = ? AND product_url <> '' ORDER BY id LIMIT 1").get(projectId,countryCode,row.product_url);
         if(existing){
-          const fields=['name','sale_price',...competitorImportFields];
+          const fields=['name','sale_price',...competitorImportFields,...competitorParameterImportFields];
           db.prepare(`UPDATE project_competitors SET ${fields.map((key)=>`${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
-            .run(...fields.map((key)=>row[key]),now,existing.id);updated+=1;
-        }else{insertCompetitor(project,countryCode,row);created+=1}
+            .run(...fields.map((key)=>row[key]),now,existing.id);
+          db.prepare('UPDATE project_competitors SET uses_project_defaults = 0 WHERE id = ?').run(existing.id);updated+=1;
+        }else{insertCompetitor(project,countryCode,row,true);created+=1}
       }
       db.exec('COMMIT');
     }catch(error){db.exec('ROLLBACK');throw error}

@@ -144,12 +144,8 @@ function competitorRow(item,country){
   return `<tr title="${escapeHtml(item.name||item.asin||'竞品')}">
     <td class="competitor-image">${competitorImage(item)}</td>
     <td><label class="competitor-price"><span>${escapeHtml(country.symbol)}</span><input type="number" min="0" step="0.01" data-competitor-price="${item.id}" value="${item.sale_price||''}" placeholder="0.00"></label><span class="competitor-name-hint">${escapeHtml(item.name||item.asin||'未命名竞品')}</span></td>
-    <td class="competitor-flag">${yesNoLabel(item.is_fba)}</td><td>${yesNoLabel(item.has_aplus)}</td><td>${yesNoLabel(item.has_video)}</td>
-    <td>${escapeHtml(item.listing_date||'—')}</td>
     <td class="competitor-link">${item.product_url?`<a href="${escapeHtml(item.product_url)}" target="_blank" rel="noopener">${escapeHtml(item.asin||'打开商品')}</a>`:'—'}</td>
-    <td class="competitor-number">${number(item.monthly_sales,0)}</td>
     <td class="competitor-number">${escapeHtml(country.symbol)}${number(item.monthly_revenue_local,2)}</td>
-    <td class="competitor-number">$${number(item.monthly_revenue_usd,2)}</td>
     <td class="competitor-number">${item.rating==null?'—':number(item.rating,1)}</td>
     <td class="profit-rate-cell competitor-profit ${rateClass}"><b>${item.profit_rate==null?'—':`${number(item.profit_rate,1)}%`}</b>${profitInfoIcon(item.calculation)}<button class="cost-button" type="button" data-competitor-cost="${item.id}">${item.uses_project_defaults?'跟随产品':'独立成本'} · ¥${number(item.cost_cny)}</button></td>
     <td><div class="competitor-actions"><button class="delete-competitor" type="button" data-delete-competitor="${item.id}">删除</button></div></td>
@@ -160,9 +156,9 @@ function renderCompetitors(){
   if(!selected.length){$('#competitorGroups').innerHTML='<div class="competitor-stats-empty">暂无可用竞品站点</div>';renderCompetitorStats();return}
   $('#competitorGroups').innerHTML=selected.map((country)=>{
     const rows=competitorRowsFor(country.code);const visible=rows.slice(0,5);const total=Number(state.competitorCounts[country.code]??rows.length);
-    const body=visible.length?visible.map((item)=>competitorRow(item,country)).join(''):'<tr><td class="competitor-empty" colspan="13">暂无竞品，可手动添加或导入 Excel</td></tr>';
+    const body=visible.length?visible.map((item)=>competitorRow(item,country)).join(''):'<tr><td class="competitor-empty" colspan="7">暂无竞品，可手动添加或导入 Excel</td></tr>';
     const sourceNames=[...new Set(rows.map((item)=>item.source_format).filter(Boolean).map((value)=>value==='seller_sprite'?'卖家精灵':value==='helium10'?'H10':value))];
-    return `<div class="competitor-site"><div class="competitor-site-head"><div><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><small>${total} 条竞品</small>${total>5?'<small class="display-limit">前端仅显示前 5 条</small>':''}</div><div class="competitor-site-head-actions"><button class="copy-competitors" type="button" data-copy-competitors="${country.code}" ${visible.length?'':'disabled'}>复制表格</button><button class="import-competitors" type="button" data-import-competitors="${country.code}">导入 Excel</button><button class="add-competitor" type="button" data-add-competitor="${country.code}">+ 手动添加</button></div></div><div class="competitor-table-wrap"><table class="competitor-table"><thead><tr><th>图片</th><th>售价</th><th>是否FBA</th><th>有无A+</th><th>有无视频</th><th>上架时间</th><th>商品链接</th><th>月销量</th><th>月销售额（当地货币）</th><th>月销售额（美元）</th><th>评分</th><th>预计利润率</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></div><div class="competitor-import-note"><b>导入来源：</b>${sourceNames.length?sourceNames.map(escapeHtml).join('、'):'手动录入'}；重复 ASIN 会更新商品数据并保留已修改的独立成本。</div></div>`;
+    return `<div class="competitor-site"><div class="competitor-site-head"><div><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><small>${total} 条竞品</small>${total>5?'<small class="display-limit">前端仅显示前 5 条</small>':''}</div><div class="competitor-site-head-actions"><button class="copy-competitors" type="button" data-copy-competitors="${country.code}" ${visible.length?'':'disabled'}>复制表格</button><button class="import-competitors" type="button" data-import-competitors="${country.code}">导入 Excel</button><button class="add-competitor" type="button" data-add-competitor="${country.code}">+ 手动添加</button></div></div><div class="competitor-table-wrap"><table class="competitor-table"><thead><tr><th>图片</th><th>售价</th><th>商品链接</th><th>月销售额（当地货币）</th><th>评分</th><th>预计利润率</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></div><div class="competitor-import-note"><b>导入来源：</b>${sourceNames.length?sourceNames.map(escapeHtml).join('、'):'手动录入'}；导入数据的品类、佣金、重量和尺寸按 Excel 计算，仅成本默认继承产品；重复 ASIN 会保留已修改的独立成本。</div></div>`;
   }).join('');
   $$('[data-competitor-price]').forEach((input)=>input.onchange=()=>saveCompetitor(input.dataset.competitorPrice,{sale_price:Number(input.value)||0}));
   renderCompetitorStats();
@@ -172,8 +168,11 @@ function renderCompetitorStats(){
   for(const country of state.bootstrap.countries){
     const filled=state.competitors.filter((item)=>item.country_code===country.code&&String(item.name||'').trim()&&Number(item.sale_price)>0&&item.profit_rate!=null);
     if(!filled.length)continue;
-    const firstFive=filled.slice(0,5);const average=firstFive.reduce((sum,item)=>sum+Number(item.profit_rate),0)/firstFive.length;
-    cards.push(`<div class="competitor-stat"><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><span>${number(average,1)}%</span><small>前 ${firstFive.length} 条平均利润率 · 共 ${Number(state.competitorCounts[country.code]??filled.length)} 条数据</small></div>`);
+    const firstThree=filled.slice(0,3);const divisor=firstThree.length;
+    const averageSales=firstThree.reduce((sum,item)=>sum+Number(item.monthly_sales),0)/divisor;
+    const averageRevenue=firstThree.reduce((sum,item)=>sum+Number(item.monthly_revenue_local),0)/divisor;
+    const averageProfit=firstThree.reduce((sum,item)=>sum+Number(item.profit_rate),0)/divisor;
+    cards.push(`<div class="competitor-stat"><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><div class="competitor-stat-metrics"><span><small>前三平均销量</small>${number(averageSales,0)}</span><span><small>前三平均销售额</small>${escapeHtml(country.symbol)}${number(averageRevenue,2)}</span><span><small>前三平均利润率</small>${number(averageProfit,1)}%</span></div><small>按前 ${divisor} 条有效竞品统计 · 共 ${Number(state.competitorCounts[country.code]??filled.length)} 条数据</small></div>`);
   }
   $('#competitorStats').innerHTML=cards.join('')||'<div class="competitor-stats-empty">填写竞品名称和售价后，将在这里生成站点统计</div>';
 }
@@ -191,9 +190,18 @@ async function importCompetitorExcel(event){
 }
 async function copyCompetitorTable(code){
   const country=state.bootstrap.countries.find((item)=>item.code===code);const rows=competitorRowsFor(code).slice(0,5);
-  const headers=['图片','售价','是否FBA','有无A+','有无视频','上架时间','商品链接','月销量','月销售额（当地货币）','月销售额（美元）','评分','预计利润率'];
   const data=rows.map((item)=>[item.image_url?`=IMAGE("${String(item.image_url).replace(/"/g,'""')}")`:'',`${country.symbol}${number(item.sale_price,2)}`,yesNoLabel(item.is_fba),yesNoLabel(item.has_aplus),yesNoLabel(item.has_video),item.listing_date||'',item.product_url||'',number(item.monthly_sales,0),`${country.symbol}${number(item.monthly_revenue_local,2)}`,`$${number(item.monthly_revenue_usd,2)}`,item.rating==null?'':number(item.rating,1),item.profit_rate==null?'':`${number(item.profit_rate,1)}%`]);
-  await writeRows([headers,...data]);toast(`已复制 ${marketCode(code)} 站前 ${rows.length} 条竞品表格`);
+  await writeRows(data);toast(`已复制 ${marketCode(code)} 站前 ${rows.length} 条竞品表格（不含列名）`);
+}
+async function copyCompetitorStats(){
+  const data=[];
+  for(const country of state.bootstrap.countries){
+    const rows=state.competitors.filter((item)=>item.country_code===country.code&&String(item.name||'').trim()&&Number(item.sale_price)>0&&item.profit_rate!=null).slice(0,3);
+    if(!rows.length)continue;
+    data.push([`${marketCode(country.code)} ${country.name}`,number(rows.reduce((sum,item)=>sum+Number(item.monthly_sales),0)/rows.length,0),`${country.symbol}${number(rows.reduce((sum,item)=>sum+Number(item.monthly_revenue_local),0)/rows.length,2)}`,`${number(rows.reduce((sum,item)=>sum+Number(item.profit_rate),0)/rows.length,1)}%`]);
+  }
+  if(!data.length)throw new Error('暂无可复制的竞品统计');
+  await writeRows(data);toast(`已复制 ${data.length} 个站点的前三竞品统计（不含列名）`);
 }
 async function addCompetitor(code){
   saving(true);try{await flushDrafts();await api(`/api/projects/${state.project.id}/competitors`,{method:'POST',body:JSON.stringify({country_code:code})});await loadCompetitors();saving(false)}catch(error){saving(false,true);toast(error.message)}
@@ -330,6 +338,7 @@ function bindEvents(){
   $('#confirmProjectDelete').onclick=confirmProjectDelete;
   $$('[data-cancel-project-delete]').forEach((button)=>button.onclick=cancelProjectDelete);
   $('#copySiteProfitBtn').onclick=copySiteProfitTable;
+  $('#copyCompetitorStatsBtn').onclick=()=>copyCompetitorStats().catch((error)=>toast(error.message));
   $('#readDimensionsBtn').onclick=readDimensionsFromClipboard;
   $$('[data-embed-dimension]').forEach((input)=>input.addEventListener('paste',handleDimensionPaste));
   $('#competitorToggle').onclick=toggleCompetitorPanel;
