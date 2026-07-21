@@ -9,9 +9,10 @@ const docs = path.join(root,'docs');
 const dataDir = path.join(docs,'data');
 fs.mkdirSync(dataDir,{ recursive:true });
 
-for (const name of ['styles.css','ui-fixes.css','admin.css','dimensions.js','app.js','embed.css','embed.js','site-card.css','site-card.js']) {
+for (const name of ['styles.css','ui-fixes.css','admin.css','dimensions.js','app.js','embed.css','embed.js','competitor-import.js','site-card.css','site-card.js']) {
   fs.copyFileSync(path.join(root,'public',name),path.join(docs,name));
 }
+fs.copyFileSync(path.join(root,'node_modules','exceljs','dist','exceljs.min.js'),path.join(docs,'exceljs.min.js'));
 fs.copyFileSync(path.join(root,'pages-src','static-api.js'),path.join(docs,'static-api.js'));
 fs.copyFileSync(path.join(root,'pages-src','config.js'),path.join(docs,'config.js'));
 

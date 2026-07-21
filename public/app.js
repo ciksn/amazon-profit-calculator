@@ -7,6 +7,7 @@ const state = {
   expanded:new Set(),
   editingProjectId:null,
   editingProjectImage:'',
+  editingCommissionTouched:false,
   editingListing:null,
   view:'calculator',
   ruleTab:'countries',
@@ -17,6 +18,7 @@ const $$ = (selector, root=document) => [...root.querySelectorAll(selector)];
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g,(char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[char]));
 const saveTimers = new Map();
 const apiBase = String(window.MARGINGO_API_BASE || '').replace(/\/$/,'');
+const dashboardApiBase = String(window.MARGINGO_DASHBOARD_API || 'http://127.0.0.1:4180').replace(/\/$/,'');
 
 const MARKET_PORTALS = [
   ['US','纽约','10001','https://www.amazon.com'],
@@ -72,6 +74,30 @@ function replaceProject(project) {
 function countryFor(code) { return state.bootstrap.countries.find((country) => country.code === code); }
 function resultFor(projectId,code) { return (state.resultsByProject[projectId] || []).find((result) => result.country_code === code); }
 function formatNumber(value,digits=2) { return Number(value || 0).toLocaleString('zh-CN',{ maximumFractionDigits:digits }); }
+function commonProjectCommission(project) {
+  const values=(project?.listings || []).map((item)=>item.referral_rate_override);
+  const normalized=values.map((value)=>value===null || value===undefined || value===''?null:Number(value));
+  const first=normalized[0] ?? null;
+  return { value:normalized.length && normalized.every((value)=>value===first) ? (first ?? '') : '',mixed:normalized.some((value)=>value!==first) };
+}
+function profitInfoIcon(result) {
+  if (!result || !Number(result.sale_price)) return '';
+  const money=(value)=>`${result.symbol}${formatNumber(value)}`;
+  const explanation=[
+    '利润率计算过程',
+    `含税售价：${money(result.sale_price)}`,
+    `减 VAT：${money(result.vat_amount)}`,
+    `净销售收入：${money(result.net_revenue)}`,
+    `减 ${result.tax_label || '税费'}：${money(result.tax_fee)}`,
+    `减佣金：${money(result.referral_fee)}（${formatNumber(result.referral_rate,2)}%）`,
+    `减 FBA：${money(result.fba_fee)}`,
+    `减头程：${money(result.freight_fee)}`,
+    `减产品成本：${money(result.product_cost)}`,
+    `单件利润：${money(result.profit)}`,
+    `利润率：${money(result.profit)} ÷ ${money(result.sale_price)} × 100 = ${formatNumber(result.profit_rate,1)}%`
+  ].join('\n');
+  return `<span class="profit-info" tabindex="0" title="${escapeHtml(explanation)}" aria-label="查看利润率计算过程">i</span>`;
+}
 
 function encodeSharedState(value) {
   const bytes = new TextEncoder().encode(JSON.stringify(value)); let binary = '';
@@ -150,18 +176,17 @@ async function flushProjectPrices(project) {
   }
   await calculateProject(project.id,false); return findProject(project.id);
 }
-async function copyProductResults(projectId) {
-  const project = findProject(projectId); const link = projectAdjustLink(project);
-  const rows = project.listings.filter((item) => item.selected).map((listing) => { const result = resultFor(project.id,listing.country_code);
-    const input = $(`[data-project-id="${project.id}"][data-country-code="${listing.country_code}"][data-listing-input="sale_price"]`); const price = input?.value ?? listing.sale_price;
-    return [project.name,`${listing.symbol}${formatNumber(price)}`,result ? `${formatNumber(result.profit_rate,1)}%` : '—',link]; });
-  await writeTableRows(rows,3); toast(`已复制 ${rows.length} 行产品结果`); flushProjectPrices(project).catch((error) => toast(error.message));
+async function copyListingResult(projectId,code) {
+  const project = findProject(projectId); const listing = project.listings.find((item) => item.country_code === code); const country = countryFor(code); const result = resultFor(project.id,code);
+  const input = $(`[data-project-id="${project.id}"][data-country-code="${code}"][data-listing-input="sale_price"]`); const price = input?.value ?? listing.sale_price;
+  await writeTableRows([[`${marketCode(country.code)} ${country.name}`,`${listing.symbol}${formatNumber(price)}`,result ? `${formatNumber(result.profit_rate,1)}%` : '—']]);
+  toast(`已复制 ${marketCode(code)} 站点数据`); flushProjectPrices(project).catch((error) => toast(error.message));
 }
 async function copySiteProfitTable(projectId) {
   const project = findProject(projectId);
   const rows = project.listings.filter((item) => item.selected).map((listing) => { const country = countryFor(listing.country_code); const result = resultFor(project.id,listing.country_code);
     const input = $(`[data-project-id="${project.id}"][data-country-code="${listing.country_code}"][data-listing-input="sale_price"]`); const price = input?.value ?? listing.sale_price;
-    return [`${marketCode(country.code)} ${country.name}`,project.name,`${listing.symbol}${formatNumber(price)}`,result ? `${formatNumber(result.profit_rate,1)}%` : '—']; });
+    return [`${marketCode(country.code)} ${country.name}`,`${listing.symbol}${formatNumber(price)}`,result ? `${formatNumber(result.profit_rate,1)}%` : '—']; });
   await writeTableRows(rows); toast(`已复制 ${rows.length} 行站点利润率`); flushProjectPrices(project).catch((error) => toast(error.message));
 }
 
@@ -195,6 +220,36 @@ async function calculateProject(projectId,render=true) {
 async function calculateAll() {
   await Promise.all(state.projects.map((project) => calculateProject(project.id,false)));
   renderCategoryList();
+}
+
+async function addProjectToDashboard(projectId) {
+  const project=findProject(projectId);
+  if (!project) return;
+  if (!String(project.owner_name || '').trim() || !String(project.parent_asin || '').trim()) {
+    openProductModal(project.id);
+    return toast('请先填写负责人和父 ASIN，再加入产品看板');
+  }
+  try {
+    await calculateProject(project.id,false);
+    const results=state.resultsByProject[project.id] || [];
+    const sites=project.listings.filter((listing)=>listing.selected).map((listing)=>{
+      const country=countryFor(listing.country_code);const result=results.find((item)=>item.country_code===listing.country_code);
+      return { country_code:listing.country_code,country_name:country?.name || '',currency:listing.currency,symbol:listing.symbol,
+        sale_price:Number(listing.sale_price) || 0,sales_qty:0,unit_profit:result?.profit ?? null,
+        profit_rate:result?.profit_rate ?? null,calculation_json:result || null };
+    });
+    const response=await fetch(`${dashboardApiBase}/api/manual-products/from-calculator`,{
+      method:'POST',headers:{ 'Content-Type':'application/json' },body:JSON.stringify({
+        owner_name:project.owner_name,parent_asin:project.parent_asin,child_asin:project.child_asin,product_name:project.name,
+        image_data:project.image_data,length:project.length,width:project.width,height:project.height,dimension_unit:project.dimension_unit,
+        weight:project.weight,weight_unit:project.weight_unit,cost_cny:project.cost_cny,sales_amount_cny:project.sales_amount_cny,
+        six_day_capacity:project.six_day_capacity,source_project_id:project.id,sites
+      })
+    });
+    const payload=await response.json().catch(()=>({}));
+    if (!response.ok) throw new Error(payload.error || '加入看板失败');
+    toast('已加入个人利润看板；再次点击会更新计算结果');
+  } catch (error) { toast(error.message); }
 }
 
 function renderSitePortal() {
@@ -247,7 +302,7 @@ function categoryCard(project,index) {
       </button>
       <div class="category-sites"><small>测算站点</small><div>${siteButtons}</div></div>
       <div class="category-row-actions">
-        <button class="copy-category" type="button" data-copy-product="${project.id}" title="复制产品名、售价、利润率和调整链接">复制产品结果</button>
+        <button class="add-dashboard" type="button" data-add-dashboard="${project.id}" title="把当前计算结果加入个人利润看板">加入产品看板</button>
         <button class="copy-category" type="button" data-copy-site-profit="${project.id}" title="复制站点、产品名、售价和利润率">各站点利润率</button>
         <button class="delete-category" type="button" data-delete-project="${project.id}" aria-label="删除品类" title="删除品类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button>
         <button class="edit-category" type="button" data-edit-project="${project.id}" aria-label="编辑 ${escapeHtml(project.name)}" title="编辑品类信息">编辑</button>
@@ -260,7 +315,7 @@ function categoryCard(project,index) {
 function marketTable(project,selected) {
   if (!selected.length) return `<div class="no-market-row">请在上方选择至少一个测算站点</div>`;
   return `<div class="market-table">
-    <div class="market-table-head"><span>国家</span><span>售价</span><span>类目佣金</span><span>FBA费用</span><span>头程费用</span><span>汇率</span><span>利润</span><span>利润率</span><span></span></div>
+    <div class="market-table-head"><span>国家</span><span>售价</span><span>类目佣金</span><span>FBA费用</span><span>头程费用</span><span>汇率</span><span>利润</span><span>利润率</span><span></span><span>复制</span></div>
     ${selected.map((listing) => marketRow(project,listing)).join('')}
   </div>`;
 }
@@ -284,8 +339,9 @@ function marketRow(project,listing) {
     <button class="calculated-cell cell-editor" type="button" data-edit-freight="${listing.country_code}" data-project-id="${project.id}" aria-label="查看并编辑${country.name}站头程费用"><b>${freight}</b><small>${result?.freight_pricing_mode === 'cbm' ? '按方 · 点击查看' : '按计费重 · 点击查看'}</small></button>
     <div class="calculated-cell"><b>${exchange}</b><small>1 ${escapeHtml(listing.currency)}</small></div>
     <div class="profit-cell ${cls}"><b>${hasPrice ? profit : '—'}</b><small>${hasPrice ? '单件' : '待填售价'}</small></div>
-    <div class="rate-cell ${cls}"><b>${hasPrice ? `${Number(result?.profit_rate || 0).toFixed(1)}%` : '—'}</b></div>
+    <div class="rate-cell profit-rate-cell ${cls}"><b>${hasPrice ? `${Number(result?.profit_rate || 0).toFixed(1)}%` : '—'}</b>${hasPrice ? profitInfoIcon(result) : ''}</div>
     ${listing.country_code === 'JP' ? `<button class="listing-settings special" type="button" data-edit-tax="JP" data-project-id="${project.id}" title="日本进口税项设置">日本税项</button>` : '<span></span>'}
+    <button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}" data-project-id="${project.id}">复制</button>
   </div>`;
 }
 
@@ -299,8 +355,9 @@ function bindCategoryEvents() {
     toggleExpanded(row.dataset.expandRow);
   });
   $$('[data-delete-project]').forEach((button) => button.onclick = () => deleteProject(button.dataset.deleteProject));
-  $$('[data-copy-product]').forEach((button) => button.onclick = () => copyProductResults(button.dataset.copyProduct).catch((error) => toast(error.message)));
+  $$('[data-add-dashboard]').forEach((button) => button.onclick = () => addProjectToDashboard(button.dataset.addDashboard));
   $$('[data-copy-site-profit]').forEach((button) => button.onclick = () => copySiteProfitTable(button.dataset.copySiteProfit).catch((error) => toast(error.message)));
+  $$('[data-copy-listing]').forEach((button) => button.onclick = () => copyListingResult(button.dataset.projectId,button.dataset.copyListing).catch((error) => toast(error.message)));
   $$('[data-edit-commission]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editCommission,'commission'));
   $$('[data-edit-freight]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editFreight,'freight'));
   $$('[data-edit-tax]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editTax,'tax'));
@@ -350,7 +407,11 @@ function openProductModal(projectId) {
   state.editingProjectImage = project.image_data || '';
   $('#productModalTitle').textContent = `编辑 · ${project.name}`;
   const form = $('#productForm');
-  for (const key of ['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit']) formField(form,key).value = project[key] ?? '';
+  for (const key of ['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit','owner_name','parent_asin','child_asin','sales_amount_cny','six_day_capacity']) formField(form,key).value = project[key] ?? '';
+  const commission=commonProjectCommission(project);
+  formField(form,'referral_rate_override').value=commission.value;
+  formField(form,'referral_rate_override').placeholder=commission.mixed?'当前各站点不同；填写后统一':'留空使用父品类自动匹配';
+  state.editingCommissionTouched=false;
   $('#dimensionSuffix').textContent = project.dimension_unit || 'cm';
   renderProductImagePreview();
   openModal($('#productModal'));
@@ -361,13 +422,19 @@ async function saveProductForm(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const changes = {};
-  for (const key of ['name','dimension_unit','weight_unit']) changes[key] = formField(form,key).value.trim();
-  for (const key of ['cost_cny','length','width','height','weight']) changes[key] = Number(formField(form,key).value) || 0;
+  for (const key of ['name','dimension_unit','weight_unit','owner_name','parent_asin','child_asin']) changes[key] = formField(form,key).value.trim();
+  for (const key of ['cost_cny','length','width','height','weight','sales_amount_cny','six_day_capacity']) changes[key] = Number(formField(form,key).value) || 0;
   changes.image_data = state.editingProjectImage || '';
   if (!changes.name) return toast('请填写品名');
   try {
     setSaveState('保存中…');
-    const updated = await api(`/api/projects/${state.editingProjectId}`,{ method:'PUT',body:JSON.stringify(changes) });
+    let updated = await api(`/api/projects/${state.editingProjectId}`,{ method:'PUT',body:JSON.stringify(changes) });
+    if (state.editingCommissionTouched) {
+      const raw=formField(form,'referral_rate_override').value;
+      const override=raw===''?null:Number(raw);
+      if (override!==null && (!Number.isFinite(override) || override<0 || override>100)) throw new Error('佣金比例请输入 0–100');
+      for (const listing of updated.listings) updated=await api(`/api/projects/${updated.id}/countries/${listing.country_code}`,{ method:'PUT',body:JSON.stringify({ referral_rate_override:override }) });
+    }
     replaceProject(updated);
     const summary = state.bootstrap.projects.find((item) => item.id === updated.id); if (summary) summary.name = updated.name;
     closeModal($('#productModal'));
@@ -666,6 +733,7 @@ $('#removeProductImage').onclick = () => { state.editingProjectImage = ''; rende
 $('#productImageInput').onclick = (event) => { if (!event.target.closest('button')) $('#productImageFile').click(); };
 $('#productImageInput').onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('#productImageFile').click(); } };
 formField($('#productForm'),'dimension_unit').onchange = (event) => { $('#dimensionSuffix').textContent = event.target.value; };
+formField($('#productForm'),'referral_rate_override').oninput = () => { state.editingCommissionTouched = true; };
 $$('[data-modal-dimension]').forEach((input) => input.addEventListener('paste',handleDimensionPaste));
 document.addEventListener('paste',handleProductImagePaste);
 $$('[data-close-modal]').forEach((button) => button.onclick = () => closeModal(button.closest('.modal-backdrop')));

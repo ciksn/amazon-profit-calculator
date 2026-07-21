@@ -8,6 +8,7 @@ const { calculateProfit,findSalePriceForProfitRate } = require('./lib/profit');
 const { lookupJapanTariff } = require('./lib/japan-tariff');
 const PORT = Number(process.env.PORT || 4173);
 const publicDir = path.join(__dirname, 'public');
+const excelJsBrowserFile = path.join(__dirname,'node_modules','exceljs','dist','exceljs.min.js');
 
 function json(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -31,7 +32,7 @@ function readBody(req) {
     let raw = '';
     req.on('data', (chunk) => {
       raw += chunk;
-      if (raw.length > 2_000_000) reject(new Error('请求内容过大'));
+      if (raw.length > 15_000_000) reject(new Error('请求内容过大'));
     });
     req.on('end', () => {
       try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('JSON 格式不正确')); }
@@ -97,12 +98,49 @@ function calculateCompetitor(row) {
     width:competitorProject.width, height:competitorProject.height, dimension_unit:competitorProject.dimension_unit,
     weight:competitorProject.weight, weight_unit:competitorProject.weight_unit, category_text:categoryText,
     symbol:country.symbol, country_name:country.name, flag:country.flag,
-    profit_rate:filled ? calculated.profit_rate : null, profit:filled ? calculated.profit : null };
+    profit_rate:filled ? calculated.profit_rate : null, profit:filled ? calculated.profit : null,
+    calculation:filled ? calculated : null };
 }
 
 function listCompetitors(projectId) {
-  return db.prepare('SELECT * FROM project_competitors WHERE project_id = ? ORDER BY country_code, id')
-    .all(projectId).map(calculateCompetitor);
+  return db.prepare(`SELECT * FROM (
+      SELECT pc.*, ROW_NUMBER() OVER (PARTITION BY country_code ORDER BY id) AS display_rank
+      FROM project_competitors pc WHERE project_id = ?
+    ) WHERE display_rank <= 5 ORDER BY country_code, id`).all(projectId).map(calculateCompetitor);
+}
+function competitorCounts(projectId) {
+  return Object.fromEntries(db.prepare('SELECT country_code, COUNT(*) AS count FROM project_competitors WHERE project_id = ? GROUP BY country_code')
+    .all(projectId).map((row)=>[row.country_code,row.count]));
+}
+
+const competitorImportFields=['asin','image_url','product_url','is_fba','has_aplus','has_video','listing_date',
+  'monthly_sales','monthly_revenue_local','monthly_revenue_usd','rating','source_format','source_row'];
+function importedCompetitorValues(body={}) {
+  const short=(value,max=4000)=>String(value??'').trim().slice(0,max);
+  const numeric=(value)=>Number.isFinite(Number(value))?Number(value):0;
+  const nullableNumber=(value)=>value==null||value===''?null:(Number.isFinite(Number(value))?Number(value):null);
+  const nullableBoolean=(value)=>value==null?null:Number(Boolean(value));
+  const webUrl=(value)=>{const url=short(value);return /^https?:\/\//i.test(url)?url:''};
+  return {
+    name:short(body.name,1000),sale_price:numeric(body.sale_price),asin:short(body.asin,32),
+    image_url:webUrl(body.image_url),product_url:webUrl(body.product_url),is_fba:nullableBoolean(body.is_fba),
+    has_aplus:nullableBoolean(body.has_aplus),has_video:nullableBoolean(body.has_video),listing_date:short(body.listing_date,80),
+    monthly_sales:numeric(body.monthly_sales),monthly_revenue_local:numeric(body.monthly_revenue_local),
+    monthly_revenue_usd:numeric(body.monthly_revenue_usd),rating:nullableNumber(body.rating),
+    source_format:short(body.source_format,40),source_row:Math.max(0,Math.trunc(numeric(body.source_row)))
+  };
+}
+function insertCompetitor(project,countryCode,body={}) {
+  const listing=project.listings.find((item)=>item.country_code===countryCode);const imported=importedCompetitorValues(body);const now=new Date().toISOString();
+  const result=db.prepare(`INSERT INTO project_competitors
+    (project_id,country_code,name,sale_price,cost_cny,length,width,height,dimension_unit,weight,weight_unit,category_text,uses_project_defaults,
+      asin,image_url,product_url,is_fba,has_aplus,has_video,listing_date,monthly_sales,monthly_revenue_local,monthly_revenue_usd,rating,source_format,source_row,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(project.id,countryCode,imported.name,imported.sale_price,
+      Number(body.cost_cny??project.cost_cny)||0,Number(body.length??project.length)||0,Number(body.width??project.width)||0,
+      Number(body.height??project.height)||0,body.dimension_unit||project.dimension_unit,Number(body.weight??project.weight)||0,
+      body.weight_unit||project.weight_unit,body.category_text??listing.category_text,1,
+      ...competitorImportFields.map((key)=>imported[key]),now,now);
+  return db.prepare('SELECT * FROM project_competitors WHERE id = ?').get(Number(result.lastInsertRowid));
 }
 
 function bootstrap() {
@@ -162,7 +200,8 @@ async function api(req, res, url) {
   if (projectMatch && method === 'PUT') {
     const id = Number(projectMatch[1]);
     const body = await readBody(req);
-    const allowed = ['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit','image_data'];
+    const allowed = ['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit','image_data',
+      'owner_name','parent_asin','child_asin','sales_amount_cny','six_day_capacity'];
     const fields = allowed.filter((key) => Object.hasOwn(body,key));
     if (fields.length) db.prepare(`UPDATE projects SET ${fields.map((key) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
       .run(...fields.map((key) => body[key]),new Date().toISOString(),id);
@@ -189,11 +228,37 @@ async function api(req, res, url) {
     return json(res,200,getProject(Number(listingMatch[1])));
   }
 
+  const competitorImportMatch = url.pathname.match(/^\/api\/projects\/(\d+)\/competitors\/import$/);
+  if (competitorImportMatch && method === 'POST') {
+    const projectId=Number(competitorImportMatch[1]);const project=getProject(projectId);
+    if(!project)return json(res,404,{ error:'品类不存在' });
+    const body=await readBody(req);const countryCode=String(body.country_code||'').toUpperCase();
+    if(!project.listings.some((item)=>item.country_code===countryCode))return json(res,400,{ error:'站点不存在' });
+    if(!Array.isArray(body.rows)||!body.rows.length)return json(res,400,{ error:'Excel 中没有可导入的竞品数据' });
+    if(body.rows.length>10000)return json(res,400,{ error:'单次最多导入 10000 条竞品' });
+    let created=0;let updated=0;const now=new Date().toISOString();
+    db.exec('BEGIN');
+    try {
+      for(const source of body.rows){
+        const row=importedCompetitorValues(source);let existing=null;
+        if(row.asin)existing=db.prepare('SELECT id FROM project_competitors WHERE project_id = ? AND country_code = ? AND asin = ? ORDER BY id LIMIT 1').get(projectId,countryCode,row.asin);
+        if(!existing&&row.product_url)existing=db.prepare("SELECT id FROM project_competitors WHERE project_id = ? AND country_code = ? AND product_url = ? AND product_url <> '' ORDER BY id LIMIT 1").get(projectId,countryCode,row.product_url);
+        if(existing){
+          const fields=['name','sale_price',...competitorImportFields];
+          db.prepare(`UPDATE project_competitors SET ${fields.map((key)=>`${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+            .run(...fields.map((key)=>row[key]),now,existing.id);updated+=1;
+        }else{insertCompetitor(project,countryCode,row);created+=1}
+      }
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error}
+    return json(res,200,{ imported:body.rows.length,created,updated });
+  }
+
   const competitorListMatch = url.pathname.match(/^\/api\/projects\/(\d+)\/competitors$/);
   if (competitorListMatch && method === 'GET') {
     const projectId = Number(competitorListMatch[1]);
     if (!getProject(projectId)) return json(res,404,{ error:'品类不存在' });
-    return json(res,200,{ competitors:listCompetitors(projectId) });
+    return json(res,200,{ competitors:listCompetitors(projectId),competitor_counts:competitorCounts(projectId) });
   }
   if (competitorListMatch && method === 'POST') {
     const projectId = Number(competitorListMatch[1]);
@@ -202,23 +267,14 @@ async function api(req, res, url) {
     const body = await readBody(req);
     const countryCode = String(body.country_code || '').toUpperCase();
     if (!project.listings.some((item) => item.country_code === countryCode)) return json(res,400,{ error:'站点不存在' });
-    const now = new Date().toISOString();
-    const listing = project.listings.find((item) => item.country_code === countryCode);
-    const result = db.prepare(`INSERT INTO project_competitors
-      (project_id,country_code,name,sale_price,cost_cny,length,width,height,dimension_unit,weight,weight_unit,category_text,uses_project_defaults,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(projectId,countryCode,String(body.name || ''),Number(body.sale_price)||0,
-        Number(body.cost_cny ?? project.cost_cny)||0,Number(body.length ?? project.length)||0,
-        Number(body.width ?? project.width)||0,Number(body.height ?? project.height)||0,
-        body.dimension_unit || project.dimension_unit,Number(body.weight ?? project.weight)||0,
-        body.weight_unit || project.weight_unit,body.category_text ?? listing.category_text,1,now,now);
-    return json(res,201,calculateCompetitor(db.prepare('SELECT * FROM project_competitors WHERE id = ?').get(Number(result.lastInsertRowid))));
+    return json(res,201,calculateCompetitor(insertCompetitor(project,countryCode,body)));
   }
 
   const competitorMatch = url.pathname.match(/^\/api\/competitors\/(\d+)$/);
   if (competitorMatch && method === 'PUT') {
     const id = Number(competitorMatch[1]);
     const body = await readBody(req);
-    const allowed = ['country_code','name','sale_price','cost_cny','length','width','height','dimension_unit','weight','weight_unit','category_text','uses_project_defaults'];
+    const allowed = ['country_code','name','sale_price','cost_cny','length','width','height','dimension_unit','weight','weight_unit','category_text','uses_project_defaults',...competitorImportFields];
     const fields = allowed.filter((key) => Object.hasOwn(body,key));
     const parameterFields = ['cost_cny','length','width','height','dimension_unit','weight','weight_unit','category_text'];
     if (fields.some((key) => parameterFields.includes(key)) && !fields.includes('uses_project_defaults')) {
@@ -301,8 +357,8 @@ async function api(req, res, url) {
 const mime = { '.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml' };
 function staticFile(req,res,url) {
   const requestPath = url.pathname === '/' ? '/index.html' : url.pathname;
-  const file = path.normalize(path.join(publicDir,requestPath));
-  if (!file.startsWith(publicDir)) { res.writeHead(403); return res.end('Forbidden'); }
+  const file = requestPath === '/exceljs.min.js' ? excelJsBrowserFile:path.normalize(path.join(publicDir,requestPath));
+  if (file !== excelJsBrowserFile && !file.startsWith(publicDir)) { res.writeHead(403); return res.end('Forbidden'); }
   fs.readFile(file,(error,data) => {
     if (error) { res.writeHead(404); return res.end('Not found'); }
     res.writeHead(200,{ 'Content-Type':mime[path.extname(file)] || 'application/octet-stream' });

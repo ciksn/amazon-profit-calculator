@@ -104,6 +104,17 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
     assert.equal(competitorList.competitors[0].id,competitor.id);
     assert.equal((await fetch(`${base}/api/competitors/${competitor.id}`,{method:'DELETE'})).status,200);
     assert.equal((await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors.length,0);
+    const importPayload={country_code:'JP',rows:[{asin:'B0IMPORT01',name:'导入竞品',sale_price:6200,image_url:'https://example.com/a.jpg',product_url:'https://amazon.co.jp/dp/B0IMPORT01',is_fba:true,has_aplus:false,has_video:true,listing_date:'2025-01-01',monthly_sales:320,monthly_revenue_local:1984000,monthly_revenue_usd:13300,rating:4.5,source_format:'seller_sprite',source_row:2}]};
+    const imported=await (await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(importPayload)})).json();
+    assert.deepEqual(imported,{imported:1,created:1,updated:0});
+    let importedRow=(await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors[0];
+    assert.equal(importedRow.asin,'B0IMPORT01');assert.equal(importedRow.has_video,1);assert.equal(importedRow.monthly_sales,320);
+    importedRow=await (await fetch(`${base}/api/competitors/${importedRow.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({cost_cny:77})})).json();
+    importPayload.rows[0].sale_price=6400;const reimported=await (await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(importPayload)})).json();
+    assert.deepEqual(reimported,{imported:1,created:0,updated:1});
+    importedRow=(await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors[0];
+    assert.equal(importedRow.cost_cny,77);assert.equal(importedRow.sale_price,6400);assert.equal(importedRow.uses_project_defaults,0);
+    assert.equal((await fetch(`${base}/api/competitors/${importedRow.id}`,{method:'DELETE'})).status,200);
     const match=await (await fetch(`${base}/api/commission/match`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'US',text:'Unknown Category',sale_price:20})})).json();
     assert.equal(match.fallback,true);
     for (const type of ['countries','sizes','fba','freight','commission']) assert.equal((await fetch(`${base}/api/rules/${type}`)).status,200);

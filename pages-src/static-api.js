@@ -118,8 +118,33 @@
   }
 
   async function listCompetitors(projectId) {
-    return Promise.all(local.competitors.filter((item) => Number(item.project_id) === Number(projectId))
-      .sort((a,b) => String(a.country_code).localeCompare(String(b.country_code)) || Number(a.id) - Number(b.id)).map(calculateCompetitor));
+    const perCountry=new Map();const visible=local.competitors.filter((item)=>Number(item.project_id)===Number(projectId))
+      .sort((a,b)=>String(a.country_code).localeCompare(String(b.country_code))||Number(a.id)-Number(b.id))
+      .filter((item)=>{const count=perCountry.get(item.country_code)||0;perCountry.set(item.country_code,count+1);return count<5});
+    return Promise.all(visible.map(calculateCompetitor));
+  }
+  function competitorCounts(projectId){const counts={};for(const item of local.competitors.filter((row)=>Number(row.project_id)===Number(projectId)))counts[item.country_code]=(counts[item.country_code]||0)+1;return counts}
+
+  const competitorImportFields=['asin','image_url','product_url','is_fba','has_aplus','has_video','listing_date',
+    'monthly_sales','monthly_revenue_local','monthly_revenue_usd','rating','source_format','source_row'];
+  function importedCompetitorValues(body={}) {
+    const short=(value,max=4000)=>String(value??'').trim().slice(0,max);const numeric=(value)=>Number.isFinite(Number(value))?Number(value):0;
+    const nullableNumber=(value)=>value==null||value===''?null:(Number.isFinite(Number(value))?Number(value):null);
+    const nullableBoolean=(value)=>value==null?null:Number(Boolean(value));const webUrl=(value)=>{const url=short(value);return /^https?:\/\//i.test(url)?url:''};
+    return { name:short(body.name,1000),sale_price:numeric(body.sale_price),asin:short(body.asin,32),image_url:webUrl(body.image_url),
+      product_url:webUrl(body.product_url),is_fba:nullableBoolean(body.is_fba),has_aplus:nullableBoolean(body.has_aplus),
+      has_video:nullableBoolean(body.has_video),listing_date:short(body.listing_date,80),monthly_sales:numeric(body.monthly_sales),
+      monthly_revenue_local:numeric(body.monthly_revenue_local),monthly_revenue_usd:numeric(body.monthly_revenue_usd),
+      rating:nullableNumber(body.rating),source_format:short(body.source_format,40),source_row:Math.max(0,Math.trunc(numeric(body.source_row))) };
+  }
+  function newCompetitorRow(project,listing,body={}) {
+    const now=new Date().toISOString();const imported=importedCompetitorValues(body);
+    return { id:local.nextCompetitorId++,project_id:project.id,country_code:listing.country_code,
+      name:imported.name,sale_price:imported.sale_price,cost_cny:Number(body.cost_cny??project.cost_cny)||0,
+      length:Number(body.length??project.length)||0,width:Number(body.width??project.width)||0,height:Number(body.height??project.height)||0,
+      dimension_unit:body.dimension_unit||project.dimension_unit,weight:Number(body.weight??project.weight)||0,
+      weight_unit:body.weight_unit||project.weight_unit,category_text:body.category_text??listing.category_text,uses_project_defaults:1,
+      ...Object.fromEntries(competitorImportFields.map((key)=>[key,imported[key]])),created_at:now,updated_at:now };
   }
 
   function normalizeHs(value) {
@@ -203,16 +228,25 @@
       const project = local.projects.find((item) => Number(item.id) === Number(listingMatch[1])); if (project) project.updated_at = new Date().toISOString();
       save(); return json(200,await getProject(listingMatch[1]));
     }
+    const competitorImportMatch = path.match(/^\/api\/projects\/(\d+)\/competitors\/import$/);
+    if (competitorImportMatch && method === 'POST') {
+      const project=await getProject(competitorImportMatch[1]);if(!project)return json(404,{ error:'品类不存在' });
+      const body=readBody(options);const countryCode=String(body.country_code||'').toUpperCase();const listing=project.listings.find((item)=>item.country_code===countryCode);
+      if(!listing)return json(400,{ error:'站点不存在' });
+      if(!Array.isArray(body.rows)||!body.rows.length)return json(400,{ error:'Excel 中没有可导入的竞品数据' });
+      if(body.rows.length>10000)return json(400,{ error:'单次最多导入 10000 条竞品' });
+      let created=0;let updated=0;
+      for(const source of body.rows){const row=importedCompetitorValues(source);const existing=local.competitors.find((item)=>Number(item.project_id)===Number(project.id)&&item.country_code===countryCode&&((row.asin&&item.asin===row.asin)||(row.product_url&&item.product_url===row.product_url)));
+        if(existing){Object.assign(existing,row,{updated_at:new Date().toISOString()});updated+=1}else{local.competitors.push(newCompetitorRow(project,listing,row));created+=1}}
+      save();return json(200,{imported:body.rows.length,created,updated});
+    }
     const competitorListMatch = path.match(/^\/api\/projects\/(\d+)\/competitors$/);
-    if (competitorListMatch && method === 'GET') return json(200,{ competitors:await listCompetitors(competitorListMatch[1]) });
+    if (competitorListMatch && method === 'GET') return json(200,{ competitors:await listCompetitors(competitorListMatch[1]),competitor_counts:competitorCounts(competitorListMatch[1]) });
     if (competitorListMatch && method === 'POST') {
       const project = await getProject(competitorListMatch[1]); if (!project) return json(404,{ error:'品类不存在' });
       const body = readBody(options); const listing = project.listings.find((item) => item.country_code === body.country_code);
       if (!listing) return json(400,{ error:'站点不存在' });
-      const now = new Date().toISOString(); const row = { id:local.nextCompetitorId++,project_id:project.id,country_code:body.country_code,
-        name:String(body.name || ''),sale_price:Number(body.sale_price) || 0,cost_cny:project.cost_cny,length:project.length,width:project.width,
-        height:project.height,dimension_unit:project.dimension_unit,weight:project.weight,weight_unit:project.weight_unit,
-        category_text:listing.category_text,uses_project_defaults:1,created_at:now,updated_at:now };
+      const row=newCompetitorRow(project,listing,body);
       local.competitors.push(row); save(); return json(201,await calculateCompetitor(row));
     }
     const competitorMatch = path.match(/^\/api\/competitors\/(\d+)$/);
