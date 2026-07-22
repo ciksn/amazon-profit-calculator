@@ -22,7 +22,7 @@
     const parsed=Number(normalized);return Number.isFinite(parsed)?parsed:0;
   };
   const headerKey=(value)=>text(value).toLowerCase().replace(/[\s_（）()\-—:/：]/g,'');
-  const headerIndex=(headers)=>new Map(headers.map((header,index)=>[headerKey(header),index]));
+  const headerIndex=(headers)=>new Map(Array.from(headers,(header,index)=>[headerKey(header),index]));
   const findColumn=(headers,names=[],pattern=null)=>{
     const lookup=headerIndex(headers);
     for(const name of names){const index=lookup.get(headerKey(name));if(index!=null)return index}
@@ -85,7 +85,7 @@
     const indexes=format==='seller_sprite'?{
       asin:column(['ASIN']),name:column(['商品标题']),url:column(['商品详情页链接']),image:column(['商品主图']),
       price:column(['价格($)','价格'],/^价格/),fulfillment:column(['配送方式']),aplus:column(['A+页面']),video:column(['视频介绍']),
-      listed:column(['上架时间']),sales:column(['月销量']),revenue:column([],/^月销售额/),rating:column(['评分']),reviews:column(['评价数量','评论数量','评论数','评价数']),
+      listed:column(['上架时间']),sales:column(['月销量']),revenue:column([],/^月销售额/),rating:column(['评分']),reviews:column(['评分数','评价数量','评论数量','评论数','评价数']),
       category:column(['类目路径','大类目']),weight:column(['包装重量（单位换算）','商品重量（单位换算）','包装重量','商品重量']),
       dimensions:column(['包装尺寸（单位换算）','商品尺寸（单位换算）','包装尺寸','商品尺寸'])
     }:{

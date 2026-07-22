@@ -45,3 +45,9 @@ test('同款式统计需要的评价数量可以从两种导出表识别',()=>{
   const [h10]=parseRows(h10Headers,[['https://example.com/b.jpg','https://amazon.com/dp/B0REVIEWS02','B0REVIEWS02','商品二',30,20,600,4.7,567]],{countryCode:'US'});
   assert.equal(h10.review_count,567);
 });
+
+test('带空洞列的卖家精灵表头不会触发 Map 迭代错误',()=>{
+  const headers=[];headers[0]='ASIN';headers[5]='商品标题';headers[6]='商品详情页链接';headers[7]='商品主图';headers[16]='月销量';headers[19]='月销售额(CDN$)';headers[23]='价格(CDN$)';headers[27]='评分数';headers[29]='评分';headers[34]='上架时间';
+  const row=[];row[0]='B0SPARSE001';row[5]='稀疏表头商品';row[6]='https://amazon.ca/dp/B0SPARSE001';row[7]='https://example.com/sparse.jpg';row[16]=100;row[19]=1999;row[23]=19.99;row[27]=888;row[29]=4.6;row[34]='2026-01-01';
+  const [item]=parseRows(headers,[row],{countryCode:'CA',countryCnyPerLocal:5.2,usdCnyPerLocal:7.2});assert.equal(item.review_count,888);assert.equal(item.sale_price,19.99);
+});

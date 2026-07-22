@@ -1,6 +1,6 @@
 'use strict';
 
-const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},similarCompetitors:[],similarCounts:{},activeCompetitorSiteCode:'',activeSimilarSiteCode:'',competitorExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',importKind:'standard',manualCountryCode:'',manualAnalysisCountryCode:'',manualAnalysisIds:[],clearCountryCode:'',clearKind:'standard',analyzingSiteCode:'',japanTariffPayload:null,japanTariffSelection:null,shareKey:'',newInstance:false,saving:0,pending:Promise.resolve()};
+const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},similarCompetitors:[],similarCounts:{},activeCompetitorSiteCode:'',activeSimilarSiteCode:'',competitorExpanded:true,competitorStatsExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',importKind:'standard',manualCountryCode:'',manualAnalysisCountryCode:'',manualAnalysisIds:[],clearCountryCode:'',clearKind:'standard',analyzingSiteCode:'',japanTariffPayload:null,japanTariffSelection:null,shareKey:'',newInstance:false,saving:0,pending:Promise.resolve()};
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
@@ -209,7 +209,7 @@ function renderCompetitorStats(){
     const averageProfit=firstThree.reduce((sum,item)=>sum+Number(item.profit_rate),0)/divisor;
     cards.push(`<div class="competitor-stat"><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><div class="competitor-stat-metrics"><span><small>前三平均销量</small>${number(averageSales,0)}</span><span><small>前三平均销售额（USD）</small>$${number(averageRevenueUsd,2)}</span><span><small>前三平均利润率</small>${number(averageProfit,1)}%</span></div><small>按前 ${divisor} 条有效竞品统计 · 共 ${Number(state.competitorCounts[country.code]??filled.length)} 条数据</small></div>`);
   }
-  $('#competitorStats').innerHTML=cards.join('')||'<div class="competitor-stats-empty">填写竞品名称和售价后，将在这里生成站点统计</div>';
+  $('#competitorStats').innerHTML=cards.join('')||'<div class="competitor-stats-empty">填写竞品名称和售价后，将在这里生成站点统计</div>';$('#competitorStats').hidden=!state.competitorStatsExpanded;
 }
 function similarRowsFor(code){return state.similarCompetitors.filter((item)=>item.country_code===code).sort((a,b)=>Number(b.monthly_revenue_local)-Number(a.monthly_revenue_local)||Number(a.id)-Number(b.id))}
 function renderSimilarCompetitors(){
@@ -345,6 +345,9 @@ function handleDimensionPaste(event){const text=event.clipboardData?.getData('te
 function toggleCompetitorPanel(){
   state.competitorExpanded=!state.competitorExpanded;const panel=$('.competitor-panel');panel.classList.toggle('collapsed',!state.competitorExpanded);$('#competitorToggle').setAttribute('aria-expanded',String(state.competitorExpanded));$('.competitor-toggle-label').firstChild.textContent=state.competitorExpanded?'收起 ':'展开 ';
 }
+function toggleCompetitorStats(){
+  state.competitorStatsExpanded=!state.competitorStatsExpanded;const content=$('#competitorStats'),button=$('#competitorStatsToggle');content.hidden=!state.competitorStatsExpanded;button.setAttribute('aria-expanded',String(state.competitorStatsExpanded));button.querySelector('span').textContent=state.competitorStatsExpanded?'收起':'展开';button.classList.toggle('collapsed',!state.competitorStatsExpanded);
+}
 function toggleMarketPanel(){
   state.marketExpanded=!state.marketExpanded;const panel=$('.market-panel');panel.classList.toggle('collapsed',!state.marketExpanded);$('#marketToggle').setAttribute('aria-expanded',String(state.marketExpanded));$('.market-toggle-label').firstChild.textContent=state.marketExpanded?'收起 ':'展开 ';
 }
@@ -442,6 +445,7 @@ function bindEvents(){
   $('#readDimensionsBtn').onclick=readDimensionsFromClipboard;
   $$('[data-embed-dimension]').forEach((input)=>input.addEventListener('paste',handleDimensionPaste));
   $('#competitorToggle').onclick=toggleCompetitorPanel;
+  $('#competitorStatsToggle').onclick=toggleCompetitorStats;
   $('#marketToggle').onclick=toggleMarketPanel;
   $('#competitorExcelInput').onchange=importCompetitorExcel;
   $('#competitorGroups').onclick=(event)=>{const preview=event.target.closest('[data-preview-image]');if(preview)return openImagePreview(preview);const imported=event.target.closest('[data-import-competitors]');if(imported)return beginCompetitorImport(imported.dataset.importCompetitors);const copy=event.target.closest('[data-copy-competitors]');if(copy)return copyCompetitorTable(copy.dataset.copyCompetitors).catch((error)=>toast(error.message));const add=event.target.closest('[data-add-competitor]');if(add)return addCompetitor(add.dataset.addCompetitor);const analyze=event.target.closest('[data-analyze-competitors]');if(analyze)return analyzeCompetitors(analyze.dataset.analyzeCompetitors);const clear=event.target.closest('[data-clear-competitors]');if(clear)return clearCompetitors(clear.dataset.clearCompetitors);const params=event.target.closest('[data-competitor-params]');if(params)return openCostModal(Number(params.dataset.competitorParams));const remove=event.target.closest('[data-delete-competitor]');if(remove)return deleteCompetitor(Number(remove.dataset.deleteCompetitor))};
