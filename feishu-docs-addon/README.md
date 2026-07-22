@@ -15,8 +15,7 @@
 
 ```powershell
 npm install
-npm install -g @lark-opdev/cli@latest
-opdev login
+npm exec opdev -- login
 $env:MARGINGO_EMBED_URL='https://你的域名/embed.html'
 npm run build
 npm run upload
