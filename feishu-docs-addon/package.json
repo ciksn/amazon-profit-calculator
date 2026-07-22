@@ -6,7 +6,7 @@
     "start": "webpack serve --mode development",
     "build": "webpack --mode production",
     "test": "node --test test/*.test.js",
-    "upload": "npm run build && opdev upload ./dist"
+    "upload": "npm run build && opdev upload ./dist -t block -v patch -d \"MarginGo 飞书云文档小组件更新\""
   },
   "dependencies": {
     "@lark-opdev/block-docs-addon-api": "0.0.11"
