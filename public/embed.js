@@ -4,6 +4,7 @@ const state={bootstrap:null,project:null,results:[],competitors:[],competitorCou
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
+const widgetMode=new URLSearchParams(location.search).get('widget')==='1';
 const syncChannel='BroadcastChannel' in window?new BroadcastChannel('margingo-project-sync'):null;
 const escapeHtml=(value)=>String(value??'').replace(/[&<>"']/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const number=(value,digits=2)=>Number(value||0).toLocaleString('zh-CN',{maximumFractionDigits:digits});
@@ -64,6 +65,7 @@ async function copyInstanceLink(){
 function dismissInstanceSetup(){$('#instanceSetup').hidden=true}
 
 async function initialize(){
+  if(widgetMode){$('#copyInstanceLinkBtn').hidden=true;$('#instanceBadge').lastChild.textContent=' 本文档独立数据'}
   state.shareKey=new URLSearchParams(location.hash.replace(/^#/,'' )).get('key')||'';
   if(!state.shareKey){
     const created=await api('/api/embed/instances',{method:'POST',body:'{}'});

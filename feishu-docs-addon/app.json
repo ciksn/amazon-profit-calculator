@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 1,
+  "appID": "cli_REPLACE_WITH_FEISHU_APP_ID",
+  "blockTypeID": "blk_REPLACE_WITH_DOCS_ADDON_BLOCK_TYPE_ID",
+  "projectName": "MarginGo",
+  "initialHeight": 900,
+  "contributes": {
+    "addPanel": {
+      "initialHeight": 900,
+      "view": "index.html"
+    }
+  }
+}

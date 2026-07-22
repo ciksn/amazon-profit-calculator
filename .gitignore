@@ -11,6 +11,7 @@ node_modules/
 .tmp*
 *.log
 coverage/
+feishu-docs-addon/dist/
 config/*.local.json
 .git-empty-backup/
 outputs/

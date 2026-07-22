@@ -88,6 +88,20 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
     assert.notEqual(untouched.name,'独立实例 A');
     const isolatedCalculation=await (await fetch(`${base}/api/embed/calculate`,{method:'POST',headers:{'content-type':'application/json','x-workspace-key':firstInstance.access_key},body:JSON.stringify({project_id:secondInstance.project.id})})).json();
     assert.equal(isolatedCalculation.project_id,firstInstance.project.id);
+    const embedHeaders={'content-type':'application/json','x-workspace-key':firstInstance.access_key};
+    assert.equal((await fetch(`${base}/api/embed/countries/AU`,{method:'PUT',headers:embedHeaders,body:JSON.stringify({sale_price:25})})).status,200);
+    assert.equal((await fetch(`${base}/api/embed/competitors/import`,{method:'POST',headers:embedHeaders,body:'{}'})).status,400);
+    assert.equal((await fetch(`${base}/api/embed/competitors/analyze`,{method:'POST',headers:embedHeaders,body:'{}'})).status,400);
+    const scopedCompetitor=await (await fetch(`${base}/api/embed/competitors`,{method:'POST',headers:embedHeaders,body:JSON.stringify({country_code:'AU',name:'隔离竞品',sale_price:20})})).json();
+    assert.equal((await fetch(`${base}/api/embed/competitors/${scopedCompetitor.id}`,{method:'PUT',headers:embedHeaders,body:JSON.stringify({cost_cny:10})})).status,200);
+    assert.equal((await fetch(`${base}/api/embed/competitors/${scopedCompetitor.id}`,{method:'DELETE',headers:{'x-workspace-key':secondInstance.access_key}})).status,404);
+    assert.equal((await fetch(`${base}/api/embed/competitors/${scopedCompetitor.id}`,{method:'DELETE',headers:embedHeaders})).status,200);
+    const scopedRecord=await (await fetch(`${base}/api/embed/site-card-records`,{method:'POST',headers:embedHeaders,body:JSON.stringify({country_code:'AU',name:'隔离方案'})})).json();
+    assert.equal((await fetch(`${base}/api/embed/site-card-records/${scopedRecord.id}`,{method:'PUT',headers:embedHeaders,body:JSON.stringify({name:'隔离方案 B'})})).status,200);
+    assert.equal((await fetch(`${base}/api/embed/site-card-records/${scopedRecord.id}`,{method:'DELETE',headers:{'x-workspace-key':secondInstance.access_key}})).status,404);
+    assert.equal((await fetch(`${base}/api/embed/site-card-records/${scopedRecord.id}`,{method:'DELETE',headers:embedHeaders})).status,200);
+    assert.equal((await fetch(`${base}/api/embed/competitors`,{method:'DELETE',headers:embedHeaders})).status,200);
+    assert.equal((await fetch(`${base}/api/embed/not-found`,{headers:embedHeaders})).status,404);
     assert.equal((await fetch(`${base}/api/embed/project`,{method:'DELETE',headers:{'x-workspace-key':firstInstance.access_key}})).status,405);
   } finally {
     await fetch(`${base}/api/projects/${firstInstance.project.id}`,{method:'DELETE'});
