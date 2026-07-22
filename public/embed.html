@@ -64,6 +64,14 @@
     </footer>
   </main>
   <input id="competitorExcelInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+  <div class="competitor-modal image-preview-modal" id="imagePreviewModal" hidden>
+    <button class="competitor-modal-backdrop image-preview-backdrop" type="button" data-close-image-preview aria-label="关闭大图"></button>
+    <figure class="image-preview-card" role="dialog" aria-modal="true" aria-labelledby="imagePreviewCaption">
+      <button class="image-preview-close" type="button" data-close-image-preview aria-label="关闭大图">×</button>
+      <img id="imagePreview" alt="">
+      <figcaption id="imagePreviewCaption"></figcaption>
+    </figure>
+  </div>
   <div class="competitor-modal" id="manualCompetitorModal" hidden>
     <div class="competitor-modal-backdrop" data-close-manual-competitor></div>
     <form class="competitor-modal-card" id="manualCompetitorForm">
@@ -129,6 +137,6 @@
   <script src="./dimensions.js"></script>
   <script src="./exceljs.min.js"></script>
   <script src="./competitor-import.js?v=20260721-7"></script>
-  <script src="./embed.js?v=20260722-1"></script>
+  <script src="./embed.js?v=20260722-2"></script>
 </body>
 </html>

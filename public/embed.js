@@ -159,7 +159,17 @@ function toggleCompetitorSite(code){
 }
 function competitorRowsFor(code){return state.competitors.filter((item)=>item.country_code===code).sort((a,b)=>Number(b.monthly_revenue_local)-Number(a.monthly_revenue_local)||Number(a.id)-Number(b.id))}
 function yesNoLabel(value){return value==null?'—':Number(value)?'是':'否'}
-function competitorImage(item){return item.image_url?`<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.name||item.asin||'竞品')}" loading="lazy" referrerpolicy="no-referrer">`:'<span>无图</span>'}
+function competitorImage(item){
+  if(!item.image_url)return '<span>无图</span>';
+  const label=item.name||item.asin||'竞品';
+  return `<button class="competitor-image-button" type="button" data-preview-image="${escapeHtml(item.image_url)}" data-preview-alt="${escapeHtml(label)}" aria-label="查看 ${escapeHtml(label)} 大图"><img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(label)}" loading="lazy" referrerpolicy="no-referrer"></button>`;
+}
+function openImagePreview(button){
+  const url=button.dataset.previewImage;if(!url)return;
+  const label=button.dataset.previewAlt||'竞品图片';const modal=$('#imagePreviewModal');
+  $('#imagePreview').src=url;$('#imagePreview').alt=label;$('#imagePreviewCaption').textContent=label;modal.hidden=false;modal.querySelector('.image-preview-close').focus();
+}
+function closeImagePreview(){const modal=$('#imagePreviewModal');modal.hidden=true;$('#imagePreview').removeAttribute('src')}
 function storedList(value){if(Array.isArray(value))return value;try{const parsed=JSON.parse(value||'[]');return Array.isArray(parsed)?parsed:[]}catch{return []}}
 function competitorAnalysisText(item){
   if(item.analysis_status==='insufficient')return '资料不足';
@@ -398,7 +408,9 @@ function bindEvents(){
   $('#competitorToggle').onclick=toggleCompetitorPanel;
   $('#marketToggle').onclick=toggleMarketPanel;
   $('#competitorExcelInput').onchange=importCompetitorExcel;
-  $('#competitorGroups').onclick=(event)=>{const imported=event.target.closest('[data-import-competitors]');if(imported)return beginCompetitorImport(imported.dataset.importCompetitors);const copy=event.target.closest('[data-copy-competitors]');if(copy)return copyCompetitorTable(copy.dataset.copyCompetitors).catch((error)=>toast(error.message));const add=event.target.closest('[data-add-competitor]');if(add)return addCompetitor(add.dataset.addCompetitor);const analyze=event.target.closest('[data-analyze-competitors]');if(analyze)return analyzeCompetitors(analyze.dataset.analyzeCompetitors);const clear=event.target.closest('[data-clear-competitors]');if(clear)return clearCompetitors(clear.dataset.clearCompetitors);const params=event.target.closest('[data-competitor-params]');if(params)return openCostModal(Number(params.dataset.competitorParams));const remove=event.target.closest('[data-delete-competitor]');if(remove)return deleteCompetitor(Number(remove.dataset.deleteCompetitor))};
+  $('#competitorGroups').onclick=(event)=>{const preview=event.target.closest('[data-preview-image]');if(preview)return openImagePreview(preview);const imported=event.target.closest('[data-import-competitors]');if(imported)return beginCompetitorImport(imported.dataset.importCompetitors);const copy=event.target.closest('[data-copy-competitors]');if(copy)return copyCompetitorTable(copy.dataset.copyCompetitors).catch((error)=>toast(error.message));const add=event.target.closest('[data-add-competitor]');if(add)return addCompetitor(add.dataset.addCompetitor);const analyze=event.target.closest('[data-analyze-competitors]');if(analyze)return analyzeCompetitors(analyze.dataset.analyzeCompetitors);const clear=event.target.closest('[data-clear-competitors]');if(clear)return clearCompetitors(clear.dataset.clearCompetitors);const params=event.target.closest('[data-competitor-params]');if(params)return openCostModal(Number(params.dataset.competitorParams));const remove=event.target.closest('[data-delete-competitor]');if(remove)return deleteCompetitor(Number(remove.dataset.deleteCompetitor))};
+  $$('[data-close-image-preview]').forEach((button)=>button.onclick=closeImagePreview);
+  document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&!$('#imagePreviewModal').hidden)closeImagePreview()});
   $('#competitorCostForm').onsubmit=saveCompetitorCost;
   $('#manualCompetitorForm').onsubmit=saveManualCompetitor;
   $$('[data-close-manual-competitor]').forEach((button)=>button.onclick=closeManualCompetitor);
