@@ -1,6 +1,6 @@
 'use strict';
 
-const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},activeCompetitorSiteCode:'',competitorExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',manualCountryCode:'',clearCountryCode:'',analyzingSiteCode:'',japanTariffPayload:null,japanTariffSelection:null,shareKey:'',saving:0,pending:Promise.resolve()};
+const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},activeCompetitorSiteCode:'',competitorExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',manualCountryCode:'',clearCountryCode:'',analyzingSiteCode:'',japanTariffPayload:null,japanTariffSelection:null,shareKey:'',newInstance:false,saving:0,pending:Promise.resolve()};
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
@@ -36,8 +36,15 @@ function profitInfoIcon(result){
 }
 
 async function api(url,options={}){
-  const target=/^https?:\/\//i.test(url)?url:`${apiBase}${url}`;
-  const response=await fetch(target,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});
+  const scoped=state.shareKey?url
+    .replace(/^\/api\/projects\/\d+\/countries\//,'/api/embed/countries/')
+    .replace(/^\/api\/projects\/\d+\/competitors/,'/api/embed/competitors')
+    .replace(/^\/api\/projects\/\d+$/,'/api/embed/project')
+    .replace(/^\/api\/competitors\//,'/api/embed/competitors/')
+    .replace(/^\/api\/calculate$/,'/api/embed/calculate'):url;
+  const target=/^https?:\/\//i.test(scoped)?scoped:`${apiBase}${scoped}`;
+  const workspaceHeader=state.shareKey&&scoped.startsWith('/api/embed/')?{'X-Workspace-Key':state.shareKey}:{};
+  const response=await fetch(target,{headers:{'Content-Type':'application/json',...workspaceHeader,...(options.headers||{})},...options});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok){const error=new Error(payload.error||'请求失败');error.status=response.status;throw error}
   if(String(options.method||'GET').toUpperCase()!=='GET'){
@@ -48,55 +55,25 @@ async function api(url,options={}){
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(el.timer);el.timer=setTimeout(()=>el.classList.remove('show'),2200)}
 function saving(start,error=false){state.saving=Math.max(0,state.saving+(start?1:-1));const el=$('#saveState');el.textContent=error?'保存失败':state.saving?'保存中…':'已保存';el.className=`save-state ${error?'error':state.saving?'saving':''}`}
 function formValue(name){return $(`[name="${name}"]`,$('#productFields')).value}
-function newShareKey(){return globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`}
-
-function encodeState(value){
-  const bytes=new TextEncoder().encode(JSON.stringify(value));let binary='';
-  for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
-  return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+function instanceLink(){const url=new URL('./embed.html',location.href);url.search='';url.hash=new URLSearchParams({key:state.shareKey}).toString();return url.href}
+async function copyInstanceLink(){
+  const link=instanceLink();
+  try{await navigator.clipboard.writeText(link)}catch{const helper=document.createElement('textarea');helper.value=link;helper.style.cssText='position:fixed;opacity:0';document.body.append(helper);helper.select();document.execCommand('copy');helper.remove()}
+  toast('专属卡片链接已复制');
 }
-function decodeState(value){
-  const padded=value.replace(/-/g,'+').replace(/_/g,'/')+'==='.slice((value.length+3)%4);
-  const binary=atob(padded);const bytes=Uint8Array.from(binary,(char)=>char.charCodeAt(0));
-  return JSON.parse(new TextDecoder().decode(bytes));
-}
-function snapshot(){
-  const p=state.project;
-  return {v:1,key:p.share_key,product:{name:p.name,cost_cny:p.cost_cny,length:p.length,width:p.width,height:p.height,dimension_unit:p.dimension_unit,weight:p.weight,weight_unit:p.weight_unit},listings:p.listings.filter((item)=>item.selected).map((item)=>({country_code:item.country_code,selected:true,sale_price:item.sale_price,category_text:item.category_text,referral_rate_override:item.referral_rate_override,declaration_ratio:item.declaration_ratio,declared_value_override:item.declared_value_override,customs_rate:item.customs_rate,consumption_tax_rate:item.consumption_tax_rate,customs_hs_code:item.customs_hs_code,customs_preference:item.customs_preference}))};
-}
-function stateLink(){const data=snapshot();const url=new URL('./index.html',location.href);url.search='';url.hash=`data=${encodeState(data)}`;return url.href}
-
-async function importSnapshot(payload,encoded){
-  if(payload?.v!==1||!payload.product||!Array.isArray(payload.listings))throw new Error('恢复链接格式不正确');
-  state.shareKey=payload.key||newShareKey();
-  let project=payload.key?await api(`/api/projects/by-share-key/${encodeURIComponent(payload.key)}`).catch(()=>null):null;
-  if(!project)project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:payload.product.name||'恢复的品类',share_key:state.shareKey})});
-  project=await api(`/api/projects/${project.id}`,{method:'PUT',body:JSON.stringify(payload.product)});
-  for(const row of project.listings){
-    if(row.selected)project=await api(`/api/projects/${project.id}/countries/${row.country_code}`,{method:'PUT',body:JSON.stringify({selected:false})});
-  }
-  for(const item of payload.listings){
-    if(!project.listings.some((row)=>row.country_code===item.country_code))continue;
-    project=await api(`/api/projects/${project.id}/countries/${item.country_code}`,{method:'PUT',body:JSON.stringify(item)});
-  }
-  return project;
-}
+function dismissInstanceSetup(){$('#instanceSetup').hidden=true}
 
 async function initialize(){
-  state.bootstrap=await api('/api/bootstrap');state.activeCompetitorSiteCode=state.bootstrap.countries[0]?.code||'';let project=null;
-  const encoded=location.hash.startsWith('#data=')?location.hash.slice(6):'';
-  if(encoded){project=await importSnapshot(decodeState(encoded),encoded);toast('已从链接恢复计算参数')}
-  const requested=new URLSearchParams(location.search).get('project');
-  if(!project&&requested)project=await api(`/api/projects/${requested}`).catch(()=>null);
-  if(!project&&state.bootstrap.projects.length)project=await api(`/api/projects/${state.bootstrap.projects[0].id}`);
-  if(!project)project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:'新品测算 01'})});
-  state.project=project;state.shareKey=project.share_key;
-  await refreshProjects();fillProduct();await calculate();await loadCompetitors();bindEvents();
-}
-async function refreshProjects(){
-  state.bootstrap=await api('/api/bootstrap');
-  const options=state.bootstrap.projects.map((item)=>`<option value="${item.id}" ${Number(item.id)===Number(state.project.id)?'selected':''}>${escapeHtml(item.name)}</option>`).join('');
-  $('#projectPicker').innerHTML=options||`<option value="${state.project.id}">${escapeHtml(state.project.name)}</option>`;
+  state.shareKey=new URLSearchParams(location.hash.replace(/^#/,'' )).get('key')||'';
+  if(!state.shareKey){
+    const created=await api('/api/embed/instances',{method:'POST',body:'{}'});
+    state.shareKey=created.access_key;state.project=created.project;state.newInstance=true;
+    history.replaceState(null,'',`#${new URLSearchParams({key:state.shareKey})}`);
+  }
+  state.bootstrap=await api('/api/embed/bootstrap');state.project=state.bootstrap.project;
+  state.activeCompetitorSiteCode=state.bootstrap.countries[0]?.code||'';
+  $('#instanceSetup').hidden=!state.newInstance;
+  fillProduct();await calculate();await loadCompetitors();bindEvents();
 }
 function sharedCategory(){return state.project.listings.find((item)=>item.selected&&item.category_text)?.category_text||state.project.listings.find((item)=>item.category_text)?.category_text||''}
 function fillProduct(){
@@ -115,7 +92,8 @@ function renderResults(){
   if(!selected.length){$('#resultRows').innerHTML='<tr><td class="empty-row" colspan="8">请至少选择一个测算站点</td></tr>';return}
   $('#resultRows').innerHTML=selected.map((listing)=>{
     const country=state.bootstrap.countries.find((item)=>item.code===listing.country_code);const result=resultFor(listing.country_code);const priced=Number(listing.sale_price)>0;const cls=priced?(Number(result?.profit)>=0?'positive':'negative'):'';const commission=listing.referral_rate_override??listing.matched_referral_rate??result?.referral_base_rate??15;
-    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.fba_fee)}`:'—'}<span class="subvalue">${escapeHtml(result?.size_tier_name||'待计算')}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="./site-card.html?project=${state.project.id}&country=${listing.country_code}" target="_blank" rel="noopener">单站卡片</a>${listing.country_code==='JP'?'<button class="japan-tax-button" type="button" data-japan-tax>税项设置</button>':''}</div></td></tr>`;
+    const siteCardHash=new URLSearchParams({key:state.shareKey,country:listing.country_code});
+    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.fba_fee)}`:'—'}<span class="subvalue">${escapeHtml(result?.size_tier_name||'待计算')}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="./site-card.html#${siteCardHash}" target="_blank" rel="noopener">单站卡片</a>${listing.country_code==='JP'?'<button class="japan-tax-button" type="button" data-japan-tax>税项设置</button>':''}</div></td></tr>`;
   }).join('');
   $$('[data-price]').forEach((input)=>{
     input.oninput=()=>{clearTimeout(input.saveTimer);input.saveTimer=setTimeout(()=>{state.pending=savePrice(input.dataset.price,input.value)},450)};
@@ -309,14 +287,6 @@ async function saveCompetitorCost(event){
   event.preventDefault();const form=event.currentTarget;const field=(name)=>form.elements.namedItem(name);const changes={category_text:field('category_text').value.trim(),weight:Number(field('weight').value)||0,weight_unit:field('weight_unit').value,length:Number(field('length').value)||0,width:Number(field('width').value)||0,height:Number(field('height').value)||0,dimension_unit:field('dimension_unit').value};const id=state.editingCompetitorId;closeCostModal();await saveCompetitor(id,changes);toast('竞品尺寸参数已保存');
 }
 async function resetCompetitorDefaults(){const id=state.editingCompetitorId;if(!id)return;closeCostModal();await saveCompetitor(id,{uses_project_defaults:true});toast('已恢复跟随产品参数')}
-function requestProjectDelete(){const project=state.project;if(!project)return;$('#projectDeleteMessage').textContent=`确定删除品类“${project.name}”吗？`;$('#projectDeleteModal').hidden=false;$('#confirmProjectDelete').focus()}
-function cancelProjectDelete(){$('#projectDeleteModal').hidden=true}
-async function confirmProjectDelete(){
-  const project=state.project;if(!project)return;cancelProjectDelete();
-  saving(true);try{await api(`/api/projects/${project.id}`,{method:'DELETE'});state.bootstrap=await api('/api/bootstrap');state.project=state.bootstrap.projects.length?await api(`/api/projects/${state.bootstrap.projects[0].id}`):await api('/api/projects',{method:'POST',body:JSON.stringify({name:'新品测算 01'})});state.shareKey=state.project.share_key;history.replaceState(null,'',`?project=${state.project.id}`);await refreshProjects();fillProduct();await calculate();await loadCompetitors();saving(false);toast('品类已删除')}
-  catch(error){saving(false,true);toast(error.message)}
-}
-
 function applyParsedDimensions(parsed){
   const fields=$('#productFields');for(const key of ['length','width','height'])$(`[name="${key}"]`,fields).value=parsed[key];$('[name="dimension_unit"]',fields).value=parsed.unit;toast(`已识别：${parsed.length} × ${parsed.width} × ${parsed.height} ${parsed.unit}`);state.pending=saveProduct();
 }
@@ -338,7 +308,7 @@ function toggleMarketPanel(){
 async function saveProduct(){
   const body={name:formValue('name').trim()||'未命名品类',cost_cny:Number(formValue('cost_cny'))||0,weight:Number(formValue('weight'))||0,weight_unit:formValue('weight_unit'),length:Number(formValue('length'))||0,width:Number(formValue('width'))||0,height:Number(formValue('height'))||0,dimension_unit:formValue('dimension_unit')};
   saving(true);
-  try{state.project=await api(`/api/projects/${state.project.id}`,{method:'PUT',body:JSON.stringify(body)});await calculate();await refreshProjects();await loadCompetitors();saving(false)}
+  try{state.project=await api(`/api/projects/${state.project.id}`,{method:'PUT',body:JSON.stringify(body)});await calculate();await loadCompetitors();saving(false)}
   catch(error){saving(false,true);toast(error.message)}
 }
 async function saveCategory(){
@@ -415,15 +385,9 @@ function bindEvents(){
     }
     input.onchange=()=>{state.pending=input.name==='category_text'?saveCategory():saveProduct()};
   });
-  $('#projectPicker').onchange=async(event)=>{
-    state.project=await api(`/api/projects/${event.target.value}`);state.shareKey=state.project.share_key;history.replaceState(null,'',`?project=${state.project.id}`);fillProduct();await calculate();await loadCompetitors();
-  };
-  $('#newProjectBtn').onclick=async()=>{
-    state.project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:`新品测算 ${state.bootstrap.projects.length+1}`})});state.shareKey=state.project.share_key;history.replaceState(null,'',`?project=${state.project.id}`);await refreshProjects();fillProduct();await calculate();await loadCompetitors();toast('已新建品类');
-  };
-  $('#deleteProjectBtn').onclick=requestProjectDelete;
-  $('#confirmProjectDelete').onclick=confirmProjectDelete;
-  $$('[data-cancel-project-delete]').forEach((button)=>button.onclick=cancelProjectDelete);
+  $('#copyInstanceLinkBtn').onclick=copyInstanceLink;
+  $('#setupCopyLinkBtn').onclick=copyInstanceLink;
+  $('#dismissInstanceSetup').onclick=dismissInstanceSetup;
   $('#copySiteProfitBtn').onclick=copySiteProfitTable;
   $('#japanTaxForm').onsubmit=saveJapanTax;
   $('#lookupJapanTaxBtn').onclick=lookupJapanTax;
@@ -444,9 +408,9 @@ function bindEvents(){
   $$('[data-close-cost-modal]').forEach((button)=>button.onclick=closeCostModal);
   syncChannel?.addEventListener('message',(event)=>{
     if(event.data?.source!=='site-card'||Number(event.data.projectId)!==Number(state.project?.id))return;
-    clearTimeout(state.syncTimer);state.syncTimer=setTimeout(async()=>{try{state.project=await api(`/api/projects/${state.project.id}`);await refreshProjects();fillProduct();await calculate();await loadCompetitors()}catch{}},180);
+    clearTimeout(state.syncTimer);state.syncTimer=setTimeout(async()=>{try{state.project=await api(`/api/projects/${state.project.id}`);fillProduct();await calculate();await loadCompetitors()}catch{}},180);
   });
-  window.addEventListener('focus',()=>{clearTimeout(state.syncTimer);state.syncTimer=setTimeout(async()=>{try{state.project=await api(`/api/projects/${state.project.id}`);await refreshProjects();fillProduct();await calculate();await loadCompetitors()}catch{}},180)});
+  window.addEventListener('focus',()=>{clearTimeout(state.syncTimer);state.syncTimer=setTimeout(async()=>{try{state.project=await api(`/api/projects/${state.project.id}`);fillProduct();await calculate();await loadCompetitors()}catch{}},180)});
 }
 
 initialize().catch((error)=>{console.error(error);toast(`加载失败：${error.message}`);$('#resultRows').innerHTML=`<tr><td class="empty-row" colspan="8">${escapeHtml(error.message)}</td></tr>`});

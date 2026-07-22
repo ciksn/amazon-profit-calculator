@@ -4,18 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>MarginGo · 飞书卡片版</title>
-  <link rel="stylesheet" href="./embed.css?v=20260721-7">
+  <link rel="stylesheet" href="./embed.css?v=20260722-1">
 </head>
 <body>
   <main class="embed-shell">
     <header class="embed-head">
       <div class="brand"><span>M</span><div><b>MarginGo</b><small>飞书选品利润卡片</small></div></div>
       <div class="head-actions">
-        <label class="project-picker"><span>品类</span><select id="projectPicker" aria-label="选择品类"></select></label>
-        <button class="ghost-button" id="newProjectBtn" type="button">新建</button>
-        <button class="ghost-button delete-project-button" id="deleteProjectBtn" type="button">删除</button>
+        <span class="instance-badge"><i></i> 本卡片独立数据</span>
+        <button class="ghost-button" id="copyInstanceLinkBtn" type="button">复制专属链接</button>
       </div>
     </header>
+
+    <section class="instance-setup" id="instanceSetup" hidden>
+      <div><b>已创建一个全新的独立测算</b><p>当前使用网页卡片预览模式。请复制专属链接，并用它替换飞书中的通用卡片链接，确保下次打开仍进入本测算。</p></div>
+      <div class="instance-setup-actions"><button class="copy-button" id="setupCopyLinkBtn" type="button">复制专属卡片链接</button><button class="ghost-button" id="dismissInstanceSetup" type="button">稍后处理</button></div>
+    </section>
 
     <section class="product-panel" aria-labelledby="productTitle">
       <div class="section-title"><div><span class="step">01</span><div><b id="productTitle">产品参数</b><small>修改后自动保存并重新计算</small></div></div><span class="save-state" id="saveState">已保存</span></div>
@@ -56,7 +60,7 @@
 
     <footer class="embed-foot">
       <span id="copyHint">行末“复制”按钮可单独复制站点、售价和利润率</span>
-      <a href="./index.html" target="_blank" rel="noopener">打开完整计算器 ↗</a>
+      <span>当前卡片仅可访问本测算实例</span>
     </footer>
   </main>
   <input id="competitorExcelInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
@@ -90,15 +94,6 @@
       <p class="cost-tip" id="competitorDefaultsState">当前跟随产品参数；保存修改后仅影响此条竞品。</p>
       <div class="modal-actions"><button type="button" class="ghost-button reset-defaults-button" id="resetCompetitorDefaults">恢复跟随产品</button><span class="modal-action-spacer"></span><button type="button" class="ghost-button" data-close-cost-modal>取消</button><button type="submit" class="copy-button">保存并计算</button></div>
     </form>
-  </div>
-  <div class="competitor-modal" id="projectDeleteModal" hidden>
-    <div class="competitor-modal-backdrop" data-cancel-project-delete></div>
-    <div class="competitor-modal-card project-delete-card" role="dialog" aria-modal="true" aria-labelledby="projectDeleteTitle">
-      <div class="competitor-modal-head"><div><b id="projectDeleteTitle">删除品类</b><small>删除后无法恢复</small></div><button type="button" class="modal-close" data-cancel-project-delete aria-label="关闭">×</button></div>
-      <p class="project-delete-message" id="projectDeleteMessage"></p>
-      <p class="cost-tip">该品类的站点数据和竞品数据也会一起删除。</p>
-      <div class="modal-actions"><button type="button" class="ghost-button" data-cancel-project-delete>取消</button><button type="button" class="copy-button danger-confirm-button" id="confirmProjectDelete">确认删除</button></div>
-    </div>
   </div>
   <div class="competitor-modal" id="competitorClearModal" hidden>
     <div class="competitor-modal-backdrop" data-cancel-competitor-clear></div>
@@ -134,6 +129,6 @@
   <script src="./dimensions.js"></script>
   <script src="./exceljs.min.js"></script>
   <script src="./competitor-import.js?v=20260721-7"></script>
-  <script src="./embed.js?v=20260721-12"></script>
+  <script src="./embed.js?v=20260722-1"></script>
 </body>
 </html>

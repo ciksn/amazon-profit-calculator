@@ -1,6 +1,6 @@
 'use strict';
 
-const state={bootstrap:null,project:null,country:null,listing:null,result:null,records:[],recordResults:new Map(),recordTimers:new Map(),recordRequestVersions:new Map(),saving:0,pending:Promise.resolve(),reloadTimer:null};
+const state={bootstrap:null,project:null,country:null,listing:null,result:null,records:[],recordResults:new Map(),recordTimers:new Map(),recordRequestVersions:new Map(),shareKey:'',saving:0,pending:Promise.resolve(),reloadTimer:null};
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
@@ -12,8 +12,15 @@ const field=(name)=>$(`[name="${name}"]`);
 const legacyRecordStorageKey='margingo-site-card-records-v1';
 
 async function api(url,options={}){
-  const target=/^https?:\/\//i.test(url)?url:`${apiBase}${url}`;
-  const response=await fetch(target,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});
+  const scoped=state.shareKey?url
+    .replace(/^\/api\/projects\/\d+\/site-card-records/,'/api/embed/site-card-records')
+    .replace(/^\/api\/site-card-records\//,'/api/embed/site-card-records/')
+    .replace(/^\/api\/projects\/\d+\/countries\//,'/api/embed/countries/')
+    .replace(/^\/api\/projects\/\d+$/,'/api/embed/project')
+    .replace(/^\/api\/calculate$/,'/api/embed/calculate'):url;
+  const target=/^https?:\/\//i.test(scoped)?scoped:`${apiBase}${scoped}`;
+  const workspaceHeader=state.shareKey&&scoped.startsWith('/api/embed/')?{'X-Workspace-Key':state.shareKey}:{};
+  const response=await fetch(target,{headers:{'Content-Type':'application/json',...workspaceHeader,...(options.headers||{})},...options});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok)throw new Error(payload.error||'请求失败');
   return payload;
@@ -21,7 +28,10 @@ async function api(url,options={}){
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(el.timer);el.timer=setTimeout(()=>el.classList.remove('show'),2200)}
 function saving(start,error=false){state.saving=Math.max(0,state.saving+(start?1:-1));const el=$('#saveState');el.textContent=error?'保存失败':state.saving?'保存中…':'已保存';el.className=`save-state ${error?'error':state.saving?'saving':''}`}
 function announceSync(){syncChannel?.postMessage({projectId:state.project?.id,countryCode:state.country?.code,source:'site-card',at:Date.now()})}
-function updateLinks(){history.replaceState(null,'',`?project=${state.project.id}&country=${state.country.code}`)}
+function updateLinks(){
+  if(state.shareKey)return history.replaceState(null,'',`#${new URLSearchParams({key:state.shareKey,country:state.country.code})}`);
+  history.replaceState(null,'',`?project=${state.project.id}&country=${state.country.code}`);
+}
 async function loadRecords(){const payload=await api(`/api/projects/${state.project.id}/site-card-records?country_code=${encodeURIComponent(state.country.code)}`);state.records=payload.records||[];return state.records}
 function visibleRecords(){return state.records}
 async function migrateLegacyRecords(){
@@ -38,12 +48,14 @@ async function migrateLegacyRecords(){
 }
 
 async function initialize(){
-  state.bootstrap=await api('/api/bootstrap');
-  if(!state.bootstrap.projects.length)state.project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:'新品测算 01'})});
+  const hashParams=new URLSearchParams(location.hash.replace(/^#/,''));state.shareKey=hashParams.get('key')||'';
+  if(state.shareKey){
+    state.bootstrap=await api('/api/embed/bootstrap');state.project=state.bootstrap.project;
+  }else state.bootstrap=await api('/api/bootstrap');
+  if(!state.shareKey&&!state.bootstrap.projects.length)state.project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:'新品测算 01'})});
   const params=new URLSearchParams(location.search);const requestedProject=Number(params.get('project'));
-  const projectId=state.bootstrap.projects.some((item)=>Number(item.id)===requestedProject)?requestedProject:(state.project?.id||state.bootstrap.projects[0]?.id);
-  state.project=await api(`/api/projects/${projectId}`);
-  const requestedCountry=String(params.get('country')||'').toUpperCase();
+  if(!state.shareKey){const projectId=state.bootstrap.projects.some((item)=>Number(item.id)===requestedProject)?requestedProject:(state.project?.id||state.bootstrap.projects[0]?.id);state.project=await api(`/api/projects/${projectId}`)}
+  const requestedCountry=String((state.shareKey?hashParams:params).get('country')||'').toUpperCase();
   const defaultCountry=state.project.listings.find((item)=>item.selected)?.country_code||state.bootstrap.countries[0]?.code;
   setCountry(state.bootstrap.countries.some((item)=>item.code===requestedCountry)?requestedCountry:defaultCountry,false);
   await migrateLegacyRecords();await loadRecords();renderPickers();fillFields();await calculate();renderRecords();bindEvents();
@@ -55,9 +67,11 @@ function setCountry(code,shouldCalculate=true){
   updateLinks();if(shouldCalculate){fillFields();state.pending=calculate()}
 }
 function renderPickers(){
-  $('#projectPicker').innerHTML=state.bootstrap.projects.map((item)=>`<option value="${item.id}" ${Number(item.id)===Number(state.project.id)?'selected':''}>${escapeHtml(item.name)}</option>`).join('');
+  const projects=state.bootstrap.projects||[state.project];
+  $('#projectPicker').innerHTML=projects.map((item)=>`<option value="${item.id}" ${Number(item.id)===Number(state.project.id)?'selected':''}>${escapeHtml(item.name)}</option>`).join('');
+  $('#projectPicker').closest('.project-picker').hidden=Boolean(state.shareKey);
 }
-function refreshProjectSummary(){const summary=state.bootstrap.projects.find((item)=>Number(item.id)===Number(state.project.id));if(summary)summary.name=state.project.name;renderPickers()}
+function refreshProjectSummary(){const summary=state.bootstrap.projects?.find((item)=>Number(item.id)===Number(state.project.id));if(summary)summary.name=state.project.name;renderPickers()}
 function fillFields(){
   for(const key of ['name','cost_cny','weight','weight_unit','length','width','height','dimension_unit'])field(key).value=state.project[key]??'';
   $('#inlineCostInput').value=state.project.cost_cny??'';

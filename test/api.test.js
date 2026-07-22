@@ -71,6 +71,28 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
 
   const missing=await fetch(`${base}/api/projects/99999999`);
   assert.equal(missing.status,404);
+  const firstInstanceResponse=await fetch(`${base}/api/embed/instances`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+  const secondInstanceResponse=await fetch(`${base}/api/embed/instances`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+  assert.equal(firstInstanceResponse.status,201);assert.equal(secondInstanceResponse.status,201);
+  const firstInstance=await firstInstanceResponse.json();const secondInstance=await secondInstanceResponse.json();
+  try {
+    assert.notEqual(firstInstance.access_key,secondInstance.access_key);
+    assert.equal((await fetch(`${base}/api/embed/bootstrap`)).status,401);
+    assert.equal((await fetch(`${base}/api/embed/bootstrap`,{headers:{'x-workspace-key':'missing-instance-key'}})).status,404);
+    const isolatedBootstrap=await (await fetch(`${base}/api/embed/bootstrap`,{headers:{'x-workspace-key':firstInstance.access_key}})).json();
+    assert.equal(isolatedBootstrap.project.id,firstInstance.project.id);
+    assert.equal(Object.hasOwn(isolatedBootstrap,'projects'),false);
+    const renamed=await (await fetch(`${base}/api/embed/project`,{method:'PUT',headers:{'content-type':'application/json','x-workspace-key':firstInstance.access_key},body:JSON.stringify({name:'独立实例 A'})})).json();
+    assert.equal(renamed.name,'独立实例 A');
+    const untouched=await (await fetch(`${base}/api/embed/project`,{headers:{'x-workspace-key':secondInstance.access_key}})).json();
+    assert.notEqual(untouched.name,'独立实例 A');
+    const isolatedCalculation=await (await fetch(`${base}/api/embed/calculate`,{method:'POST',headers:{'content-type':'application/json','x-workspace-key':firstInstance.access_key},body:JSON.stringify({project_id:secondInstance.project.id})})).json();
+    assert.equal(isolatedCalculation.project_id,firstInstance.project.id);
+    assert.equal((await fetch(`${base}/api/embed/project`,{method:'DELETE',headers:{'x-workspace-key':firstInstance.access_key}})).status,405);
+  } finally {
+    await fetch(`${base}/api/projects/${firstInstance.project.id}`,{method:'DELETE'});
+    await fetch(`${base}/api/projects/${secondInstance.project.id}`,{method:'DELETE'});
+  }
   const createdResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'自动测试临时项目'})});
   assert.equal(createdResponse.status,201);
   const created=await createdResponse.json();

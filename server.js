@@ -23,7 +23,7 @@ function applyCors(req,res) {
   const allowed=String(process.env.CORS_ORIGINS || '').split(',').map((item)=>item.trim()).filter(Boolean);
   if (allowed.includes('*') || allowed.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');
-    res.setHeader('Access-Control-Allow-Headers','Content-Type');
+    res.setHeader('Access-Control-Allow-Headers','Content-Type,X-Workspace-Key');
     res.setHeader('Access-Control-Allow-Methods','GET,POST,PUT,DELETE,OPTIONS');
   }
 }
@@ -176,6 +176,16 @@ async function bootstrap() {
   return { countries,projects,ruleCounts:{ fba:fba.n,freightMissing:freightMissing.n,commission:commission.n } };
 }
 
+async function embedBootstrap(project) {
+  const [countries,fba,freightMissing,commission]=await Promise.all([
+    db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority'),
+    db.one('SELECT COUNT(*)::int AS n FROM fba_rules f JOIN countries c ON c.code=f.country_code WHERE c.active=TRUE'),
+    db.one("SELECT COUNT(*)::int AS n FROM freight_rules f JOIN countries c ON c.code=f.country_code WHERE c.active=TRUE AND f.status='missing'"),
+    db.one('SELECT COUNT(*)::int AS n FROM commission_rules r JOIN countries c ON c.code=r.country_code WHERE c.active=TRUE')
+  ]);
+  return { countries,project,ruleCounts:{ fba:fba.n,freightMissing:freightMissing.n,commission:commission.n } };
+}
+
 async function createProject(body) {
   const now=new Date().toISOString();
   const requestedShareKey=String(body.share_key||'').trim();
@@ -188,7 +198,61 @@ async function createProject(body) {
   return getProject(project.id);
 }
 
+function workspaceKey(req) {
+  const value=String(req.headers['x-workspace-key'] || '').trim();
+  return /^[A-Za-z0-9_-]{8,120}$/.test(value) ? value : '';
+}
+
+async function prepareEmbedRequest(req,res,url) {
+  if (url.pathname==='/api/embed/instances' && req.method==='POST') {
+    const project=await createProject({ name:'新品测算 01' });
+    return json(res,201,{ access_key:project.share_key,project });
+  }
+
+  const key=workspaceKey(req);
+  if (!key) { json(res,401,{ error:'缺少测算实例访问码' });return true; }
+  const row=await db.one('SELECT id FROM projects WHERE share_key=$1',[key]);
+  if (!row) { json(res,404,{ error:'测算实例不存在或访问码已失效' });return true; }
+  const projectId=Number(row.id);req.embedProjectId=projectId;
+
+  if (url.pathname==='/api/embed/bootstrap' && req.method==='GET') {
+    return json(res,200,await embedBootstrap(await getProject(projectId)));
+  }
+  if (url.pathname==='/api/embed/project') {
+    if (!['GET','PUT'].includes(req.method)) { json(res,405,{ error:'嵌入卡片不能删除测算实例' });return true; }
+    url.pathname=`/api/projects/${projectId}`;return false;
+  }
+  const country=url.pathname.match(/^\/api\/embed\/countries\/([A-Z]{2})$/);
+  if (country) { url.pathname=`/api/projects/${projectId}/countries/${country[1]}`;return false; }
+  const competitorCollection=url.pathname.match(/^\/api\/embed\/competitors(?:\/(import|analyze))?$/);
+  if (competitorCollection) {
+    url.pathname=`/api/projects/${projectId}/competitors${competitorCollection[1] ? `/${competitorCollection[1]}` : ''}`;return false;
+  }
+  const competitorItem=url.pathname.match(/^\/api\/embed\/competitors\/(\d+)$/);
+  if (competitorItem) {
+    const owned=await db.one('SELECT id FROM project_competitors WHERE id=$1 AND project_id=$2',[Number(competitorItem[1]),projectId]);
+    if (!owned) { json(res,404,{ error:'竞品不存在' });return true; }
+    url.pathname=`/api/competitors/${competitorItem[1]}`;return false;
+  }
+  if (url.pathname==='/api/embed/calculate') { url.pathname='/api/calculate';return false; }
+  if (url.pathname==='/api/embed/site-card-records') {
+    url.pathname=`/api/projects/${projectId}/site-card-records`;return false;
+  }
+  const recordItem=url.pathname.match(/^\/api\/embed\/site-card-records\/([^/]+)$/);
+  if (recordItem) {
+    const id=decodeURIComponent(recordItem[1]);
+    const owned=await db.one('SELECT id FROM site_card_records WHERE id=$1 AND project_id=$2',[id,projectId]);
+    if (!owned) { json(res,404,{ error:'方案记录不存在' });return true; }
+    url.pathname=`/api/site-card-records/${encodeURIComponent(id)}`;return false;
+  }
+  json(res,404,{ error:'嵌入接口不存在' });return true;
+}
+
 async function api(req,res,url) {
+  if (url.pathname.startsWith('/api/embed/')) {
+    const handled=await prepareEmbedRequest(req,res,url);
+    if (handled !== false) return handled;
+  }
   const method=req.method;
   if (method==='GET' && url.pathname==='/api/health') { await db.ready();return json(res,200,{ ok:true,database:'postgresql' }); }
   if (method==='GET' && url.pathname==='/api/bootstrap') return json(res,200,await bootstrap());
@@ -375,7 +439,7 @@ async function api(req,res,url) {
     const body=await readBody(req);return json(res,200,await lookupJapanTariff({ hsCode:body.hs_code,originCountry:body.origin_country || 'CN',preference:body.preference || 'unknown' }));
   }
   if (method==='POST' && url.pathname==='/api/calculate') {
-    const body=await readBody(req);const project=await getProject(Number(body.project_id));
+    const body=await readBody(req);const project=await getProject(Number(req.embedProjectId || body.project_id));
     if (!project) return json(res,404,{ error:'品类不存在' });
     const countries=await db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority');const results=[];
     const listings=body.country_code ? project.listings.filter((item)=>item.country_code===body.country_code) : project.listings.filter((item)=>item.selected);
