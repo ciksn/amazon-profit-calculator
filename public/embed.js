@@ -37,15 +37,8 @@ function profitInfoIcon(result){
 }
 
 async function api(url,options={}){
-  const scoped=state.shareKey?url
-    .replace(/^\/api\/projects\/\d+\/countries\//,'/api/embed/countries/')
-    .replace(/^\/api\/projects\/\d+\/competitors/,'/api/embed/competitors')
-    .replace(/^\/api\/projects\/\d+$/,'/api/embed/project')
-    .replace(/^\/api\/competitors\//,'/api/embed/competitors/')
-    .replace(/^\/api\/calculate$/,'/api/embed/calculate'):url;
-  const target=/^https?:\/\//i.test(scoped)?scoped:`${apiBase}${scoped}`;
-  const workspaceHeader=state.shareKey&&scoped.startsWith('/api/embed/')?{'X-Workspace-Key':state.shareKey}:{};
-  const response=await fetch(target,{headers:{'Content-Type':'application/json',...workspaceHeader,...(options.headers||{})},...options});
+  const target=/^https?:\/\//i.test(url)?url:`${apiBase}${url}`;
+  const response=await fetch(target,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok){const error=new Error(payload.error||'请求失败');error.status=response.status;throw error}
   if(String(options.method||'GET').toUpperCase()!=='GET'){
@@ -56,26 +49,20 @@ async function api(url,options={}){
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(el.timer);el.timer=setTimeout(()=>el.classList.remove('show'),2200)}
 function saving(start,error=false){state.saving=Math.max(0,state.saving+(start?1:-1));const el=$('#saveState');el.textContent=error?'保存失败':state.saving?'保存中…':'已保存';el.className=`save-state ${error?'error':state.saving?'saving':''}`}
 function formValue(name){return $(`[name="${name}"]`,$('#productFields')).value}
-function instanceLink(){const url=new URL('./embed.html',location.href);url.search='';url.hash=new URLSearchParams({key:state.shareKey}).toString();return url.href}
-async function copyInstanceLink(){
-  const link=instanceLink();
-  try{await navigator.clipboard.writeText(link)}catch{const helper=document.createElement('textarea');helper.value=link;helper.style.cssText='position:fixed;opacity:0';document.body.append(helper);helper.select();document.execCommand('copy');helper.remove()}
-  toast('专属卡片链接已复制');
-}
-function dismissInstanceSetup(){$('#instanceSetup').hidden=true}
-
 async function initialize(){
-  if(widgetMode){$('#copyInstanceLinkBtn').hidden=true;$('#instanceBadge').lastChild.textContent=' 本文档独立数据'}
-  state.shareKey=new URLSearchParams(location.hash.replace(/^#/,'' )).get('key')||'';
-  if(!state.shareKey){
-    const created=await api('/api/embed/instances',{method:'POST',body:'{}'});
-    state.shareKey=created.access_key;state.project=created.project;state.newInstance=true;
-    history.replaceState(null,'',`#${new URLSearchParams({key:state.shareKey})}`);
-  }
-  state.bootstrap=await api('/api/embed/bootstrap');state.project=state.bootstrap.project;
+  state.bootstrap=await api('/api/bootstrap');let project=null;
+  const requested=Number(new URLSearchParams(location.search).get('project'));
+  if(state.bootstrap.projects.some((item)=>Number(item.id)===requested))project=await api(`/api/projects/${requested}`);
+  if(!project&&state.bootstrap.projects.length)project=await api(`/api/projects/${state.bootstrap.projects[0].id}`);
+  if(!project)project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:'新品测算 01'})});
+  state.project=project;state.shareKey='';await refreshProjects();
   state.activeCompetitorSiteCode=state.bootstrap.countries[0]?.code||'';
-  $('#instanceSetup').hidden=!state.newInstance;
   fillProduct();await calculate();await loadCompetitors();bindEvents();
+}
+async function refreshProjects(){
+  state.bootstrap=await api('/api/bootstrap');
+  const options=state.bootstrap.projects.map((item)=>`<option value="${item.id}" ${Number(item.id)===Number(state.project.id)?'selected':''}>${escapeHtml(item.name)}</option>`).join('');
+  $('#projectPicker').innerHTML=options||`<option value="${state.project.id}">${escapeHtml(state.project.name)}</option>`;
 }
 function sharedCategory(){return state.project.listings.find((item)=>item.selected&&item.category_text)?.category_text||state.project.listings.find((item)=>item.category_text)?.category_text||''}
 function fillProduct(){
@@ -94,8 +81,7 @@ function renderResults(){
   if(!selected.length){$('#resultRows').innerHTML='<tr><td class="empty-row" colspan="8">请至少选择一个测算站点</td></tr>';return}
   $('#resultRows').innerHTML=selected.map((listing)=>{
     const country=state.bootstrap.countries.find((item)=>item.code===listing.country_code);const result=resultFor(listing.country_code);const priced=Number(listing.sale_price)>0;const cls=priced?(Number(result?.profit)>=0?'positive':'negative'):'';const commission=listing.referral_rate_override??listing.matched_referral_rate??result?.referral_base_rate??15;
-    const siteCardHash=new URLSearchParams({key:state.shareKey,country:listing.country_code});
-    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.fba_fee)}`:'—'}<span class="subvalue">${escapeHtml(result?.size_tier_name||'待计算')}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="./site-card.html#${siteCardHash}" target="_blank" rel="noopener">单站卡片</a>${listing.country_code==='JP'?'<button class="japan-tax-button" type="button" data-japan-tax>税项设置</button>':''}</div></td></tr>`;
+    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.fba_fee)}`:'—'}<span class="subvalue">${escapeHtml(result?.size_tier_name||'待计算')}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="./site-card.html?project=${state.project.id}&country=${listing.country_code}" target="_blank" rel="noopener">单站卡片</a>${listing.country_code==='JP'?'<button class="japan-tax-button" type="button" data-japan-tax>税项设置</button>':''}</div></td></tr>`;
   }).join('');
   $$('[data-price]').forEach((input)=>{
     input.oninput=()=>{clearTimeout(input.saveTimer);input.saveTimer=setTimeout(()=>{state.pending=savePrice(input.dataset.price,input.value)},450)};
@@ -323,6 +309,13 @@ async function saveCompetitorCost(event){
   event.preventDefault();const form=event.currentTarget;const field=(name)=>form.elements.namedItem(name);const changes={category_text:field('category_text').value.trim(),weight:Number(field('weight').value)||0,weight_unit:field('weight_unit').value,length:Number(field('length').value)||0,width:Number(field('width').value)||0,height:Number(field('height').value)||0,dimension_unit:field('dimension_unit').value};const id=state.editingCompetitorId;closeCostModal();await saveCompetitor(id,changes);toast('竞品尺寸参数已保存');
 }
 async function resetCompetitorDefaults(){const id=state.editingCompetitorId;if(!id)return;closeCostModal();await saveCompetitor(id,{uses_project_defaults:true});toast('已恢复跟随产品参数')}
+function requestProjectDelete(){const project=state.project;if(!project)return;$('#projectDeleteMessage').textContent=`确定删除品类“${project.name}”吗？`;$('#projectDeleteModal').hidden=false;$('#confirmProjectDelete').focus()}
+function cancelProjectDelete(){$('#projectDeleteModal').hidden=true}
+async function confirmProjectDelete(){
+  const project=state.project;if(!project)return;cancelProjectDelete();saving(true);
+  try{await api(`/api/projects/${project.id}`,{method:'DELETE'});state.bootstrap=await api('/api/bootstrap');state.project=state.bootstrap.projects.length?await api(`/api/projects/${state.bootstrap.projects[0].id}`):await api('/api/projects',{method:'POST',body:JSON.stringify({name:'新品测算 01'})});history.replaceState(null,'',`?project=${state.project.id}`);await refreshProjects();fillProduct();await calculate();await loadCompetitors();saving(false);toast('品类已删除')}
+  catch(error){saving(false,true);toast(error.message)}
+}
 function applyParsedDimensions(parsed){
   const fields=$('#productFields');for(const key of ['length','width','height'])$(`[name="${key}"]`,fields).value=parsed[key];$('[name="dimension_unit"]',fields).value=parsed.unit;toast(`已识别：${parsed.length} × ${parsed.width} × ${parsed.height} ${parsed.unit}`);state.pending=saveProduct();
 }
@@ -421,9 +414,11 @@ function bindEvents(){
     }
     input.onchange=()=>{state.pending=input.name==='category_text'?saveCategory():saveProduct()};
   });
-  $('#copyInstanceLinkBtn').onclick=copyInstanceLink;
-  $('#setupCopyLinkBtn').onclick=copyInstanceLink;
-  $('#dismissInstanceSetup').onclick=dismissInstanceSetup;
+  $('#projectPicker').onchange=async(event)=>{state.project=await api(`/api/projects/${event.target.value}`);history.replaceState(null,'',`?project=${state.project.id}`);fillProduct();await calculate();await loadCompetitors()};
+  $('#newProjectBtn').onclick=async()=>{state.project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:`新品测算 ${state.bootstrap.projects.length+1}`})});history.replaceState(null,'',`?project=${state.project.id}`);await refreshProjects();fillProduct();await calculate();await loadCompetitors();toast('已新建品类')};
+  $('#deleteProjectBtn').onclick=requestProjectDelete;
+  $('#confirmProjectDelete').onclick=confirmProjectDelete;
+  $$('[data-cancel-project-delete]').forEach((button)=>button.onclick=cancelProjectDelete);
   $('#copySiteProfitBtn').onclick=copySiteProfitTable;
   $('#japanTaxForm').onsubmit=saveJapanTax;
   $('#lookupJapanTaxBtn').onclick=lookupJapanTax;
