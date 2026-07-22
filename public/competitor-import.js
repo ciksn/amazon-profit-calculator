@@ -18,7 +18,7 @@
   };
   const number=(value)=>{
     if(typeof value==='number')return Number.isFinite(value)?value:0;
-    const normalized=text(value).replace(/[,，￥¥$€£A-Z]/gi,'').replace(/\s/g,'');
+    const normalized=text(value).replace(/,/g,'').replace(/[^\d.+-]/g,'');
     const parsed=Number(normalized);return Number.isFinite(parsed)?parsed:0;
   };
   const headerKey=(value)=>text(value).toLowerCase().replace(/[\s_（）()\-—:/：]/g,'');
@@ -84,12 +84,12 @@
     const column=(names,pattern)=>findColumn(headers,names,pattern);
     const indexes=format==='seller_sprite'?{
       asin:column(['ASIN']),name:column(['商品标题']),url:column(['商品详情页链接']),image:column(['商品主图']),
-      price:column(['价格($)','价格']),fulfillment:column(['配送方式']),aplus:column(['A+页面']),video:column(['视频介绍']),
+      price:column(['价格($)','价格'],/^价格/),fulfillment:column(['配送方式']),aplus:column(['A+页面']),video:column(['视频介绍']),
       listed:column(['上架时间']),sales:column(['月销量']),revenue:column([],/^月销售额/),rating:column(['评分']),
       category:column(['类目路径','大类目']),weight:column(['包装重量（单位换算）','商品重量（单位换算）','包装重量','商品重量']),
       dimensions:column(['包装尺寸（单位换算）','商品尺寸（单位换算）','包装尺寸','商品尺寸'])
     }:{
-      asin:column(['ASIN']),name:column(['标题']),url:column(['URL']),image:column(['图片 URL']),price:column(['价格']),
+      asin:column(['ASIN']),name:column(['标题']),url:column(['URL']),image:column(['图片 URL']),price:column(['价格'],/^价格/),
       fulfillment:column(['配送方式']),aplus:column(['A+页面']),video:column(['视频介绍']),listed:column(['上架时间']),
       age:column(['年龄（月）']),sales:column(h10SalesHeaders),revenue:column(h10RevenueHeaders),rating:column(['评论评分']),
       category:column(['类目','子类目']),length:column(['长度']),width:column(['宽度']),height:column(['高度']),weight:column(['重量'])

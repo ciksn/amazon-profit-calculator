@@ -191,15 +191,19 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
     assert.deepEqual(reimported,{imported:1,created:0,updated:1,discarded:0});
     const moreRows=Array.from({length:5},(_,index)=>({...importPayload.rows[0],asin:`B0MORE000${index}`,name:`分析竞品 ${index+1}`,product_url:`https://amazon.co.jp/dp/B0MORE000${index}`,monthly_revenue_local:2_000_000+index}));
     await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:moreRows})});
-    const originalAnalyze=competitorAnalysis.analyzeCompetitorBatch;let analyzedIds=[],analysisCalls=0;
-    competitorAnalysis.analyzeCompetitorBatch=async(rows)=>{analysisCalls+=1;analyzedIds=rows.map((row)=>row.id);return {model:'gemini-test',rows:rows.map((row)=>({id:row.id,featureBullets:['五点一','五点二'],sellingPoints:['便携设计','电压自适应','快速预热'],differentiation:['全球电压'],status:'complete',warning:''}))}};
+    const originalAnalyze=competitorAnalysis.analyzeCompetitorBatch;let analyzedIds=[],analysisCalls=0,receivedFeatureBullets=[];
+    competitorAnalysis.analyzeCompetitorBatch=async(rows)=>{analysisCalls+=1;analyzedIds=rows.map((row)=>row.id);receivedFeatureBullets=rows.map((row)=>row.feature_bullets);return {model:'gemini-test',rows:rows.map((row)=>({id:row.id,featureBullets:row.feature_bullets||['五点一','五点二'],sellingPoints:['便携设计','电压自适应','快速预热'],differentiation:['全球电压'],status:'complete',warning:'Amazon 返回了验证码页面；已使用 Gemini URL Context 回退'}))}};
     try {
       const analysisResponse=await fetch(`${base}/api/projects/${created.id}/competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})});
       assert.equal(analysisResponse.status,200);const analysisPayload=await analysisResponse.json();assert.equal(analysisPayload.total,5);assert.equal(analysisPayload.attempted,5);assert.equal(analysisPayload.skipped,0);assert.equal(analyzedIds.length,5);
       const analyzedList=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
       assert.ok(analyzedList.competitors.every((row)=>row.analysis_status==='complete'&&row.selling_points.includes('便携设计')));
+      assert.ok(analyzedList.competitors.every((row)=>row.analysis_warning.includes('Amazon 返回了验证码页面')));
       const repeatedAnalysis=await (await fetch(`${base}/api/projects/${created.id}/competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})})).json();
       assert.equal(repeatedAnalysis.attempted,0);assert.equal(repeatedAnalysis.skipped,5);assert.equal(analysisCalls,1);
+      const manualAnalysis=await (await fetch(`${base}/api/projects/${created.id}/competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',manual_rows:[{id:analyzedIds[0],feature_bullets:['手动五点一','手动五点二']}]})})).json();
+      assert.equal(manualAnalysis.attempted,1);assert.equal(manualAnalysis.skipped,4);assert.equal(analysisCalls,2);
+      assert.deepEqual(receivedFeatureBullets,[['手动五点一','手动五点二']]);assert.deepEqual((await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors.find((row)=>row.id===analyzedIds[0]).feature_bullets,['手动五点一','手动五点二']);
     } finally { competitorAnalysis.analyzeCompetitorBatch=originalAnalyze; }
     const cleared=await (await fetch(`${base}/api/projects/${created.id}/competitors?country_code=JP`,{method:'DELETE'})).json();
     assert.equal(cleared.deleted,6);

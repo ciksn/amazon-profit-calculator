@@ -9,7 +9,6 @@ RUN npm ci --omit=dev
 COPY --chown=node:node server.js ./
 COPY --chown=node:node lib ./lib
 COPY --chown=node:node public ./public
-COPY --chown=node:node config ./config
 COPY --chown=node:node docs/data ./docs/data
 
 USER node

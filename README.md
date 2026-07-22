@@ -29,7 +29,7 @@ Copy-Item .env.example .env
 $env:GEMINI_KEY_ENCRYPTION_KEY='加密脚本显示的主密钥'
 ```
 
-本机启用了 Windows 系统代理时，后端会自动用于 Gemini 请求。云服务器若需要代理，可设置 `GEMINI_HTTPS_PROXY=http://代理地址:端口`；默认单次请求超时为 45 秒，可通过 `GEMINI_TIMEOUT_MS` 调整，临时网络错误默认最多重试 2 次，可通过 `GEMINI_MAX_RETRIES` 调整。
+本机启用了 Windows 系统代理时，后端会自动用于 Gemini 请求。云服务器若需要代理，可设置 `GEMINI_HTTPS_PROXY=http://代理地址:端口`；默认单次请求超时为 45 秒，可通过 `GEMINI_TIMEOUT_MS` 调整，临时网络错误默认最多重试 3 次，可通过 `GEMINI_MAX_RETRIES` 调整。
 
 同一份 `.env` 密文和同一解密主密钥可部署到其他服务器，不绑定 Windows 用户。不要把解密主密钥写进 `.env`、代码或 Git。默认模型为高性价比的稳定版 `gemini-3.1-flash-lite`。然后启动：
 

@@ -375,14 +375,25 @@ async function api(req,res,url) {
     if (!project.listings.some((item)=>item.country_code===countryCode)) return json(res,400,{ error:'站点不存在' });
     const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND country_code=$2 ORDER BY monthly_revenue_local DESC,id LIMIT 5',[projectId,countryCode]);
     if (!rows.length) return json(res,400,{ error:'当前站点没有可分析的竞品' });
+    const manualById=new Map();
+    if(Array.isArray(body.manual_rows))for(const source of body.manual_rows){
+      const id=Number(source?.id);const bullets=Array.isArray(source?.feature_bullets)
+        ? source.feature_bullets.map((value)=>String(value||'').replace(/\s+/g,' ').trim().slice(0,2000)).filter(Boolean).slice(0,10):[];
+      if(!Number.isInteger(id)||!bullets.length||manualById.has(id))return json(res,400,{error:'手动五点数据不完整或包含重复竞品'});
+      manualById.set(id,bullets);
+    }
+    if(manualById.size&&[...manualById.keys()].some((id)=>!rows.some((row)=>Number(row.id)===id)))return json(res,400,{error:'手动五点包含当前站点前五之外的竞品'});
     const storedPoints=(row)=>{const value=Array.isArray(row.selling_points)?row.selling_points:(()=>{try{return JSON.parse(row.selling_points||'[]')}catch{return []}})();return Array.isArray(value)&&value.length>0};
-    const pendingRows=rows.filter((row)=>!storedPoints(row));const skipped=rows.length-pendingRows.length;
+    const pendingRows=manualById.size
+      ? rows.filter((row)=>manualById.has(Number(row.id))).map((row)=>({...row,feature_bullets:manualById.get(Number(row.id))}))
+      : rows.filter((row)=>!storedPoints(row));
+    const skipped=rows.length-pendingRows.length;
     if(!pendingRows.length)return json(res,200,{country_code:countryCode,analyzed:0,total:rows.length,attempted:0,skipped,warnings:[],model:null});
     const result=await competitorAnalysis.analyzeCompetitorBatch(pendingRows);const analyzedAt=new Date().toISOString();
     await db.transaction(async(client)=>{
       for(const row of result.rows) await client.query(`UPDATE project_competitors SET feature_bullets=$1,selling_points=$2,differentiation=$3,
-        analysis_status=$4,analysis_model=$5,analysis_at=$6,updated_at=$6 WHERE id=$7 AND project_id=$8`,[
-        JSON.stringify(row.featureBullets),JSON.stringify(row.sellingPoints),JSON.stringify(row.differentiation),row.status,result.model,analyzedAt,row.id,projectId]);
+        analysis_status=$4,analysis_warning=$5,analysis_model=$6,analysis_at=$7,updated_at=$7 WHERE id=$8 AND project_id=$9`,[
+        JSON.stringify(row.featureBullets),JSON.stringify(row.sellingPoints),JSON.stringify(row.differentiation),row.status,row.warning||'',result.model,analyzedAt,row.id,projectId]);
     });
     return json(res,200,{country_code:countryCode,analyzed:result.rows.filter((row)=>row.status==='complete').length,total:rows.length,attempted:result.rows.length,skipped,
       warnings:result.rows.filter((row)=>row.warning).map((row)=>({id:row.id,message:row.warning})),model:result.model});

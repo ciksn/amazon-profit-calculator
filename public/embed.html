@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>MarginGo · 飞书卡片版</title>
-  <link rel="stylesheet" href="./embed.css?v=20260722-1">
+  <link rel="stylesheet" href="./embed.css?v=20260722-2">
 </head>
 <body>
   <main class="embed-shell">
@@ -90,6 +90,15 @@
       <div class="modal-actions"><button type="button" class="ghost-button" data-close-manual-competitor>取消</button><button type="submit" class="copy-button">添加竞品</button></div>
     </form>
   </div>
+  <div class="competitor-modal" id="manualAnalysisModal" hidden>
+    <div class="competitor-modal-backdrop" data-close-manual-analysis></div>
+    <form class="competitor-modal-card manual-analysis-card" id="manualAnalysisForm">
+      <div class="competitor-modal-head"><div><b>补充失败竞品的五点描述</b><small>Amazon 未能获取资料。粘贴五点后，将仅根据竞品名称和五点重新分析。</small></div><button type="button" class="modal-close" data-close-manual-analysis aria-label="关闭">×</button></div>
+      <div class="manual-analysis-rows" id="manualAnalysisRows"></div>
+      <p class="manual-analysis-error" id="manualAnalysisError" role="alert"></p>
+      <div class="modal-actions"><button type="button" class="ghost-button" data-close-manual-analysis>取消</button><button type="submit" class="copy-button" id="submitManualAnalysis">分析</button></div>
+    </form>
+  </div>
   <div class="competitor-modal" id="competitorCostModal" hidden>
     <div class="competitor-modal-backdrop" data-close-cost-modal></div>
     <form class="competitor-modal-card" id="competitorCostForm">
@@ -137,6 +146,6 @@
   <script src="./dimensions.js"></script>
   <script src="./exceljs.min.js"></script>
   <script src="./competitor-import.js?v=20260721-7"></script>
-  <script src="./embed.js?v=20260722-3"></script>
+  <script src="./embed.js?v=20260722-5"></script>
 </body>
 </html>

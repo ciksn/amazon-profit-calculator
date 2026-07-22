@@ -29,3 +29,10 @@ test('H10 只有父级指标时仍可兼容导入',()=>{
   assert.equal(item.monthly_sales,120);
   assert.equal(item.monthly_revenue_local,4798.8);
 });
+
+test('日本站带日元符号的价格列可以正常识别',()=>{
+  const headers=['商品主图','商品详情页链接','ASIN','商品标题','价格(￥)','月销量','月销售额(￥)'];
+  const rows=[['https://example.com/jp.jpg','https://amazon.co.jp/dp/B0JPPRICE01','B0JPPRICE01','日本竞品','￥4,506',100,'￥450,600']];
+  const [item]=parseRows(headers,rows,{countryCode:'JP',countryCnyPerLocal:.05,usdCnyPerLocal:7.2});
+  assert.equal(detectFormat(headers),'seller_sprite');assert.equal(item.sale_price,4506);assert.equal(item.monthly_revenue_local,450600);
+});
