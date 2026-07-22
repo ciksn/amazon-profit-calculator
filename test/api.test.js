@@ -189,6 +189,14 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
     importPayload.rows[0].sale_price=6400;
     const reimported=await (await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(importPayload)})).json();
     assert.deepEqual(reimported,{imported:1,created:0,updated:1,discarded:0});
+    const similarPayload={country_code:'JP',rows:[{...importPayload.rows[0],asin:'B0SIMILAR01',name:'同款式竞品',sale_price:5000,monthly_revenue_local:500000,review_count:321,length:44,width:33,height:22,weight:1.25}]};
+    const similarImported=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(similarPayload)})).json();
+    assert.equal(similarImported.created,1);
+    let similarList=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json();
+    assert.equal(similarList.competitors[0].review_count,321);assert.equal(similarList.competitors[0].cost_cny,120);assert.equal(similarList.competitors[0].length,44);assert.equal(similarList.competitors[0].weight,1.25);
+    await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({cost_cny:99})});
+    similarList=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json();assert.equal(similarList.competitors[0].cost_cny,99);assert.equal(similarList.competitors[0].length,44);
+    const similarCleared=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors?country_code=JP`,{method:'DELETE'})).json();assert.equal(similarCleared.deleted,1);
     const moreRows=Array.from({length:5},(_,index)=>({...importPayload.rows[0],asin:`B0MORE000${index}`,name:`分析竞品 ${index+1}`,product_url:`https://amazon.co.jp/dp/B0MORE000${index}`,monthly_revenue_local:2_000_000+index}));
     await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:moreRows})});
     const originalAnalyze=competitorAnalysis.analyzeCompetitorBatch;let analyzedIds=[],analysisCalls=0,receivedFeatureBullets=[];

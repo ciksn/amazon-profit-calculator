@@ -36,3 +36,12 @@ test('日本站带日元符号的价格列可以正常识别',()=>{
   const [item]=parseRows(headers,rows,{countryCode:'JP',countryCnyPerLocal:.05,usdCnyPerLocal:7.2});
   assert.equal(detectFormat(headers),'seller_sprite');assert.equal(item.sale_price,4506);assert.equal(item.monthly_revenue_local,450600);
 });
+
+test('同款式统计需要的评价数量可以从两种导出表识别',()=>{
+  const sellerHeaders=['商品主图','商品详情页链接','ASIN','商品标题','价格','月销量','月销售额','评分','评价数量'];
+  const [seller]=parseRows(sellerHeaders,[['https://example.com/a.jpg','https://amazon.com/dp/B0REVIEWS01','B0REVIEWS01','商品',20,10,200,4.6,'1,234']],{countryCode:'US'});
+  assert.equal(seller.review_count,1234);
+  const h10Headers=['图片 URL','URL','ASIN','标题','价格','ASIN 销量','ASIN 收入','评论评分','评论数量'];
+  const [h10]=parseRows(h10Headers,[['https://example.com/b.jpg','https://amazon.com/dp/B0REVIEWS02','B0REVIEWS02','商品二',30,20,600,4.7,567]],{countryCode:'US'});
+  assert.equal(h10.review_count,567);
+});

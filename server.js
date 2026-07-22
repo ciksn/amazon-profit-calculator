@@ -87,9 +87,9 @@ async function calculateCompetitor(row) {
   const listing=project.listings.find((item)=>item.country_code===row.country_code);
   const country=await db.one('SELECT * FROM countries WHERE code=$1 AND active=TRUE',[row.country_code]);
   if (!listing || !country) return { ...row,profit_rate:null,profit:null };
-  const usesProjectDefaults=Boolean(row.uses_project_defaults);
+  const usesProjectDefaults=Boolean(row.uses_project_defaults);const isSimilar=row.competitor_kind==='similar';
   const competitorProject={ ...project,
-    cost_cny:usesProjectDefaults ? project.cost_cny : row.cost_cny,
+    cost_cny:usesProjectDefaults || isSimilar ? project.cost_cny : row.cost_cny,
     length:usesProjectDefaults ? project.length : row.length,width:usesProjectDefaults ? project.width : row.width,
     height:usesProjectDefaults ? project.height : row.height,
     dimension_unit:usesProjectDefaults ? project.dimension_unit : row.dimension_unit,
@@ -116,19 +116,19 @@ async function calculateCompetitor(row) {
     calculation:filled ? calculated : null };
 }
 
-async function listCompetitors(projectId) {
-  const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 ORDER BY country_code,monthly_revenue_local DESC,id',[projectId]);
+async function listCompetitors(projectId,kind='standard') {
+  const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 ORDER BY country_code,monthly_revenue_local DESC,id',[projectId,kind]);
   const perCountry={};const visible=rows.filter((row)=>(perCountry[row.country_code]=(perCountry[row.country_code]||0)+1)<=5);
   return Promise.all(visible.map(calculateCompetitor));
 }
 
-async function competitorCounts(projectId) {
-  const rows=await db.many('SELECT country_code,COUNT(*)::int AS count FROM project_competitors WHERE project_id=$1 GROUP BY country_code',[projectId]);
+async function competitorCounts(projectId,kind='standard') {
+  const rows=await db.many('SELECT country_code,COUNT(*)::int AS count FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 GROUP BY country_code',[projectId,kind]);
   return Object.fromEntries(rows.map((row)=>[row.country_code,row.count]));
 }
 
 const competitorImportFields=['asin','image_url','product_url','is_fba','has_aplus','has_video','listing_date',
-  'monthly_sales','monthly_revenue_local','monthly_revenue_usd','rating','source_format','source_row'];
+  'monthly_sales','monthly_revenue_local','monthly_revenue_usd','rating','review_count','source_format','source_row'];
 const competitorParameterImportFields=['length','width','height','dimension_unit','weight','weight_unit','category_text'];
 function importedCompetitorValues(body={}) {
   const short=(value,max=4000)=>String(value??'').trim().slice(0,max);
@@ -141,13 +141,13 @@ function importedCompetitorValues(body={}) {
     image_url:webUrl(body.image_url),product_url:webUrl(body.product_url),is_fba:nullableBoolean(body.is_fba),
     has_aplus:nullableBoolean(body.has_aplus),has_video:nullableBoolean(body.has_video),listing_date:short(body.listing_date,80),
     monthly_sales:numeric(body.monthly_sales),monthly_revenue_local:numeric(body.monthly_revenue_local),
-    monthly_revenue_usd:numeric(body.monthly_revenue_usd),rating:nullableNumber(body.rating),
+    monthly_revenue_usd:numeric(body.monthly_revenue_usd),rating:nullableNumber(body.rating),review_count:numeric(body.review_count),
     source_format:short(body.source_format,40),source_row:Math.max(0,Math.trunc(numeric(body.source_row))),
     length:rounded(body.length,2),width:rounded(body.width,2),height:rounded(body.height,2),dimension_unit:body.dimension_unit==='ft'?'ft':'cm',
     weight:rounded(body.weight,3),weight_unit:body.weight_unit==='lb'?'lb':'kg',category_text:short(body.category_text,500) };
 }
 
-async function insertCompetitor(project,countryCode,body={},importedFromExcel=false,client=null) {
+async function insertCompetitor(project,countryCode,body={},importedFromExcel=false,client=null,kind='standard') {
   const listing=project.listings.find((item)=>item.country_code===countryCode);const imported=importedCompetitorValues(body);const now=new Date().toISOString();
   const values={ project_id:project.id,country_code:countryCode,name:imported.name,sale_price:imported.sale_price,
     cost_cny:Number(body.cost_cny??project.cost_cny)||0,
@@ -158,7 +158,7 @@ async function insertCompetitor(project,countryCode,body={},importedFromExcel=fa
     weight:importedFromExcel?imported.weight:Number(body.weight??project.weight)||0,
     weight_unit:importedFromExcel?imported.weight_unit:(body.weight_unit||project.weight_unit),
     category_text:importedFromExcel?imported.category_text:(body.category_text??listing.category_text),
-    uses_project_defaults:importedFromExcel?0:1,created_at:now,updated_at:now };
+    uses_project_defaults:importedFromExcel?0:1,competitor_kind:kind==='similar'?'similar':'standard',created_at:now,updated_at:now };
   for (const field of competitorImportFields) values[field]=imported[field];
   const columns=Object.keys(values);const params=columns.map((column)=>values[column]);
   const sql=`INSERT INTO project_competitors (${columns.join(',')}) VALUES (${columns.map((_,index)=>`$${index+1}`).join(',')}) RETURNING *`;
@@ -344,9 +344,9 @@ async function api(req,res,url) {
     return project ? json(res,200,project) : json(res,404,{ error:'品类不存在' });
   }
 
-  const competitorImportMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/competitors\/import$/);
+  const competitorImportMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/(competitors|similar-competitors)\/import$/);
   if (competitorImportMatch && method==='POST') {
-    const projectId=Number(competitorImportMatch[1]);const project=await getProject(projectId);
+    const projectId=Number(competitorImportMatch[1]);const kind=competitorImportMatch[2]==='similar-competitors'?'similar':'standard';const project=await getProject(projectId);
     if (!project) return json(res,404,{ error:'品类不存在' });
     const body=await readBody(req);const countryCode=String(body.country_code||'').toUpperCase();
     if (!project.listings.some((item)=>item.country_code===countryCode)) return json(res,400,{ error:'站点不存在' });
@@ -355,13 +355,13 @@ async function api(req,res,url) {
     await db.transaction(async (client)=>{
       for (const source of rows) {
         const row=importedCompetitorValues(source);let existing=null;
-        if (row.asin) existing=(await client.query('SELECT id FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND UPPER(asin)=$3 ORDER BY id LIMIT 1',[projectId,countryCode,row.asin])).rows[0]||null;
-        if (!existing&&row.product_url) existing=(await client.query("SELECT id FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND product_url=$3 AND product_url<>'' ORDER BY id LIMIT 1",[projectId,countryCode,row.product_url])).rows[0]||null;
+        if (row.asin) existing=(await client.query('SELECT id FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3 AND UPPER(asin)=$4 ORDER BY id LIMIT 1',[projectId,countryCode,kind,row.asin])).rows[0]||null;
+        if (!existing&&row.product_url) existing=(await client.query("SELECT id FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3 AND product_url=$4 AND product_url<>'' ORDER BY id LIMIT 1",[projectId,countryCode,kind,row.product_url])).rows[0]||null;
         if (existing) {
           const fields=['name','sale_price',...competitorImportFields,...competitorParameterImportFields,'uses_project_defaults','updated_at'];
           const values=[row.name,row.sale_price,...competitorImportFields.map((key)=>row[key]),...competitorParameterImportFields.map((key)=>row[key]),0,new Date().toISOString(),existing.id];
           await client.query(updateSql('project_competitors',fields,`id=$${fields.length+1}`),values);updated+=1;
-        } else { await insertCompetitor(project,countryCode,row,true,client);created+=1; }
+        } else { await insertCompetitor(project,countryCode,row,true,client,kind);created+=1; }
       }
     });
     return json(res,200,{ imported:rows.length,created,updated,discarded });
@@ -373,7 +373,7 @@ async function api(req,res,url) {
     if (!project) return json(res,404,{ error:'品类不存在' });
     const body=await readBody(req);const countryCode=String(body.country_code||'').toUpperCase();
     if (!project.listings.some((item)=>item.country_code===countryCode)) return json(res,400,{ error:'站点不存在' });
-    const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND country_code=$2 ORDER BY monthly_revenue_local DESC,id LIMIT 5',[projectId,countryCode]);
+    const rows=await db.many("SELECT * FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='standard' ORDER BY monthly_revenue_local DESC,id LIMIT 5",[projectId,countryCode]);
     if (!rows.length) return json(res,400,{ error:'当前站点没有可分析的竞品' });
     const manualById=new Map();
     if(Array.isArray(body.manual_rows))for(const source of body.manual_rows){
@@ -403,7 +403,7 @@ async function api(req,res,url) {
   if (competitorListMatch && method==='GET') {
     const projectId=Number(competitorListMatch[1]);
     if (!await getProject(projectId)) return json(res,404,{ error:'品类不存在' });
-    return json(res,200,{ competitors:await listCompetitors(projectId),competitor_counts:await competitorCounts(projectId) });
+    return json(res,200,{ competitors:await listCompetitors(projectId,'standard'),competitor_counts:await competitorCounts(projectId,'standard') });
   }
   if (competitorListMatch && method==='POST') {
     const projectId=Number(competitorListMatch[1]);const project=await getProject(projectId);
@@ -418,9 +418,21 @@ async function api(req,res,url) {
     if (!await getProject(projectId)) return json(res,404,{ error:'品类不存在' });
     const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();
     const result=countryCode
-      ? await db.query('DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2',[projectId,countryCode])
-      : await db.query('DELETE FROM project_competitors WHERE project_id=$1',[projectId]);
+      ? await db.query("DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='standard'",[projectId,countryCode])
+      : await db.query("DELETE FROM project_competitors WHERE project_id=$1 AND competitor_kind='standard'",[projectId]);
     return json(res,200,{ ok:true,deleted:result.rowCount });
+  }
+
+  const similarListMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/similar-competitors$/);
+  if (similarListMatch && method==='GET') {
+    const projectId=Number(similarListMatch[1]);if(!await getProject(projectId))return json(res,404,{error:'品类不存在'});
+    return json(res,200,{competitors:await listCompetitors(projectId,'similar'),competitor_counts:await competitorCounts(projectId,'similar')});
+  }
+  if (similarListMatch && method==='DELETE') {
+    const projectId=Number(similarListMatch[1]);if(!await getProject(projectId))return json(res,404,{error:'品类不存在'});
+    const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();
+    const result=countryCode?await db.query("DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='similar'",[projectId,countryCode]):await db.query("DELETE FROM project_competitors WHERE project_id=$1 AND competitor_kind='similar'",[projectId]);
+    return json(res,200,{ok:true,deleted:result.rowCount});
   }
 
   const competitorMatch=url.pathname.match(/^\/api\/competitors\/(\d+)$/);
