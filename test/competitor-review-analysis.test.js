@@ -38,6 +38,19 @@ test('从商品页 Top Reviews 提取结构化评论且不保留评论者信息'
   assert.equal(JSON.stringify(reviews).includes('private-1'),false);
 });
 
+test('兼容 Amazon 新版 reviewText 和 reviewTitle 节点',()=>{
+  const reviews=extractTopReviews(`
+    <div data-hook="review" id="R-NEW-1">
+      <span data-hook="review-star-rating">4.0 out of 5 stars</span>
+      <a data-hook="reviewTitle">Works quickly</a>
+      <span data-hook="reviewText">Removed creases in one pass.</span>
+      <span data-hook="review-date">Reviewed on July 24, 2026</span>
+    </div>`);
+  assert.equal(reviews.length,1);
+  assert.equal(reviews[0].title,'Works quickly');
+  assert.equal(reviews[0].body,'Removed creases in one pass.');
+});
+
 test('Top Reviews 按正文去重并最多保留 10 条',()=>{
   const limited=extractTopReviews(reviewHtml(12));
   assert.equal(limited.length,10);
