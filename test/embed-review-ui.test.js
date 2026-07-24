@@ -50,3 +50,9 @@ test('同款式页面表头不展示 A+ 或视频列',()=>{
   assert.doesNotMatch(header,/>A\+</);
   assert.doesNotMatch(header,/>视频</);
 });
+
+test('普通与同款卖点分析全局互斥，避免共用手工补入弹窗互相覆盖',()=>{
+  assert.match(js,/function sellingPointAnalysisBusy\(\)\{return Boolean\(state\.analyzingSiteCode\|\|state\.similarAnalyzingSiteCode\)\}/);
+  assert.match(js,/if\(sellingPointAnalysisBusy\(\)\)return;state\[stateKey\]=code/);
+  assert.match(js,/total&&!sellingPointAnalysisBusy\(\)/);
+});
