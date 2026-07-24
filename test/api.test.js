@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const { server,matchCommission } = require('../server');
 const db = require('../lib/db');
 const competitorAnalysis = require('../lib/competitor-analysis');
+const reviewAnalysis = require('../lib/review-analysis');
 
 test('未命中具体品类时按站点使用其他类别佣金', async () => {
   assert.equal((await matchCommission('US','Health & Household',30)).rule.rate,15);
@@ -199,6 +200,10 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
     const similarCleared=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors?country_code=JP`,{method:'DELETE'})).json();assert.equal(similarCleared.deleted,1);
     const moreRows=Array.from({length:5},(_,index)=>({...importPayload.rows[0],asin:`B0MORE000${index}`,name:`分析竞品 ${index+1}`,product_url:`https://amazon.co.jp/dp/B0MORE000${index}`,monthly_revenue_local:2_000_000+index}));
     await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:moreRows})});
+    const historicalSixth=await db.one("SELECT id FROM project_competitors WHERE project_id=$1 AND country_code='JP' AND competitor_kind='standard' ORDER BY monthly_revenue_local DESC,id OFFSET 5 LIMIT 1",[created.id]);
+    await db.query("UPDATE project_competitors SET review_analysis_status='complete',review_pros=$1,review_cons=$2 WHERE id=$3",[
+      JSON.stringify(['历史优点']),JSON.stringify(['历史缺点']),historicalSixth.id
+    ]);
     const originalAnalyze=competitorAnalysis.analyzeCompetitorBatch;let analyzedIds=[],analysisCalls=0,receivedFeatureBullets=[];
     competitorAnalysis.analyzeCompetitorBatch=async(rows)=>{analysisCalls+=1;analyzedIds=rows.map((row)=>row.id);receivedFeatureBullets=rows.map((row)=>row.feature_bullets);return {model:'gemini-test',rows:rows.map((row)=>({id:row.id,featureBullets:row.feature_bullets||['五点一','五点二'],sellingPoints:['便携设计','电压自适应','快速预热'],differentiation:['全球电压'],status:'complete',warning:'Amazon 返回了验证码页面；已使用 Gemini URL Context 回退'}))}};
     try {
@@ -213,6 +218,77 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
       assert.equal(manualAnalysis.attempted,1);assert.equal(manualAnalysis.skipped,4);assert.equal(analysisCalls,2);
       assert.deepEqual(receivedFeatureBullets,[['手动五点一','手动五点二']]);assert.deepEqual((await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors.find((row)=>row.id===analyzedIds[0]).feature_bullets,['手动五点一','手动五点二']);
     } finally { competitorAnalysis.analyzeCompetitorBatch=originalAnalyze; }
+    const similarReviewRows=Array.from({length:6},(_,index)=>({...importPayload.rows[0],asin:`B0SIMREV0${index}`,name:`同款评论竞品 ${index+1}`,product_url:`https://amazon.co.jp/dp/B0SIMREV0${index}`,monthly_revenue_local:3_000_000+index}));
+    await fetch(`${base}/api/projects/${created.id}/similar-competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:similarReviewRows})});
+    const originalReviewAnalyze=reviewAnalysis.analyzeReviewBatch;
+    const reviewCalls=[],reviewContexts=[];
+    reviewAnalysis.analyzeReviewBatch=async(rows,options={})=>{
+      reviewCalls.push(rows.map((row)=>({id:Number(row.id),kind:row.competitor_kind})));
+      reviewContexts.push(options.existingSummaries||[]);
+      const failLast=reviewCalls.length===1;
+      const forceAllFail=rows.every((row)=>row.name==='全部失败');
+      return {
+        model:'gemini-review-test',
+        rows:rows.map((row,index)=>({
+          id:Number(row.id),
+          topReviews:[{id:`R-${row.id}`,rating:5,title:'好用',body:'快速方便',date:'',verified:true,vine:false,helpful:1}],
+          pros:['快速方便'],cons:index===0?['略显笨重']:[],
+          status:forceAllFail||failLast&&index===rows.length-1?'failed':'complete',
+          source:'amazon_page',sampleCount:1,
+          warning:forceAllFail||failLast&&index===rows.length-1?'未获取到公开评论':'仅基于公开 Top Reviews；仅 1 条样本'
+        })),
+        overview:{pros:['共同优点'],cons:['共同缺点']}
+      };
+    };
+    try {
+      const standardReviewResponse=await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})});
+      assert.equal(standardReviewResponse.status,200);
+      const standardReview=await standardReviewResponse.json();
+      assert.equal(standardReview.total,5);assert.equal(standardReview.attempted,5);assert.equal(standardReview.analyzed,4);assert.equal(standardReview.failed,1);
+      assert.equal(reviewCalls[0].length,5);assert.ok(reviewCalls[0].every((item)=>item.kind==='standard'));
+      let standardReviewList=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
+      assert.equal(standardReviewList.review_overview.success_count,4);
+      assert.deepEqual(standardReviewList.review_overview.pros,['共同优点']);
+      assert.equal(standardReviewList.competitors.filter((row)=>row.review_analysis_status==='complete').length,4);
+      assert.equal(standardReviewList.competitors.filter((row)=>row.review_analysis_status==='failed').length,1);
+
+      const retryReview=await (await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})})).json();
+      assert.equal(retryReview.attempted,1);assert.equal(retryReview.analyzed,1);assert.equal(reviewCalls[1].length,1);
+      assert.equal(reviewContexts[1].length,4);
+      const reusedReview=await (await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})})).json();
+      assert.equal(reusedReview.attempted,0);assert.equal(reviewCalls.length,2);
+      standardReviewList=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
+      assert.equal(standardReviewList.competitors.filter((row)=>row.review_analysis_status==='complete').length,5);
+
+      const similarReview=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})})).json();
+      assert.equal(similarReview.total,5);assert.equal(similarReview.attempted,5);assert.equal(reviewCalls[2].length,5);assert.ok(reviewCalls[2].every((item)=>item.kind==='similar'));
+      const similarReviewList=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json();
+      assert.equal(similarReviewList.review_overview.competitor_kind,'similar');
+      assert.equal(similarReviewList.competitors.filter((row)=>row.review_analysis_status==='complete').length,5);
+      assert.equal((await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).review_overview.competitor_kind,'standard');
+      const allSimilarCleared=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`,{method:'DELETE'})).json();
+      assert.equal(allSimilarCleared.deleted,6);
+      assert.equal((await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json()).competitors.length,0);
+      await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'AU',name:'全部失败',asin:'B0ALLFAIL1',product_url:'https://www.amazon.com.au/dp/B0ALLFAIL1',monthly_revenue_local:1000})});
+      const allFailedReview=await (await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'AU'})})).json();
+      assert.equal(allFailedReview.analyzed,0);
+      assert.equal(allFailedReview.review_overview.status,'insufficient');
+      assert.equal(allFailedReview.review_overview.success_count,0);
+      await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'CA',name:'单个评论竞品',asin:'B0ONLYONE1',product_url:'https://www.amazon.ca/dp/B0ONLYONE1',monthly_revenue_local:1000})});
+      const insufficientReview=await (await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'CA'})})).json();
+      assert.equal(insufficientReview.review_overview.status,'insufficient');
+      assert.equal(insufficientReview.review_overview.success_count,1);
+      assert.deepEqual(insufficientReview.review_overview.pros,[]);
+      await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'DE',name:'并发竞品',asin:'B0RACE0001',product_url:'https://www.amazon.de/dp/B0RACE0001',monthly_revenue_local:1000})});
+      let concurrentCalls=0,releaseConcurrent;
+      const bothAnalyzing=new Promise((resolve)=>{releaseConcurrent=resolve});
+      reviewAnalysis.analyzeReviewBatch=async(rows)=>{
+        concurrentCalls+=1;if(concurrentCalls===2)releaseConcurrent();await bothAnalyzing;
+        return {model:'gemini-race-test',rows:rows.map((row)=>({id:Number(row.id),topReviews:[],pros:['并发优点'],cons:[],status:'complete',source:'url_context',warning:'链接读取'})),overview:{pros:[],cons:[]}};
+      };
+      const concurrentResponses=await Promise.all([1,2].map(()=>fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'DE'})}).then((response)=>response.json())));
+      assert.deepEqual(concurrentResponses.map((item)=>item.analyzed).sort(),[0,1]);
+    } finally { reviewAnalysis.analyzeReviewBatch=originalReviewAnalyze; }
     const cleared=await (await fetch(`${base}/api/projects/${created.id}/competitors?country_code=JP`,{method:'DELETE'})).json();
     assert.equal(cleared.deleted,6);
     const match=await (await fetch(`${base}/api/commission/match`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'US',text:'Unknown Category',sale_price:20})})).json();

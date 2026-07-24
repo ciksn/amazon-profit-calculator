@@ -8,6 +8,7 @@ const db = require('./lib/db');
 const { calculateProfit,findSalePriceForProfitRate } = require('./lib/profit');
 const { lookupJapanTariff } = require('./lib/japan-tariff');
 const competitorAnalysis = require('./lib/competitor-analysis');
+const reviewAnalysis = require('./lib/review-analysis');
 const PORT = Number(process.env.PORT || 4173);
 const publicDir = path.join(__dirname,'public');
 const excelJsBrowserFile = require.resolve('exceljs/dist/exceljs.min.js');
@@ -125,6 +126,107 @@ async function listCompetitors(projectId,kind='standard') {
 async function competitorCounts(projectId,kind='standard') {
   const rows=await db.many('SELECT country_code,COUNT(*)::int AS count FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 GROUP BY country_code',[projectId,kind]);
   return Object.fromEntries(rows.map((row)=>[row.country_code,row.count]));
+}
+
+function jsonList(value) {
+  if(Array.isArray(value))return value;
+  try{const parsed=JSON.parse(value||'[]');return Array.isArray(parsed)?parsed:[]}catch{return []}
+}
+
+async function reviewOverviews(projectId,kind) {
+  const rows=await db.many('SELECT * FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind=$2 ORDER BY country_code',[projectId,kind]);
+  return Object.fromEntries(rows.map((row)=>[row.country_code,{
+    ...row,
+    pros:jsonList(row.pros),
+    cons:jsonList(row.cons),
+    competitor_ids:jsonList(row.competitor_ids)
+  }]));
+}
+
+async function upsertReviewOverview(client,{projectId,countryCode,kind,pros,cons,competitorIds,successCount,status,model,analyzedAt}) {
+  await client.query(`INSERT INTO competitor_review_overviews
+    (project_id,country_code,competitor_kind,pros,cons,competitor_ids,success_count,status,analysis_model,analysis_at,updated_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
+    ON CONFLICT (project_id,country_code,competitor_kind) DO UPDATE SET
+      pros=EXCLUDED.pros,cons=EXCLUDED.cons,competitor_ids=EXCLUDED.competitor_ids,
+      success_count=EXCLUDED.success_count,status=EXCLUDED.status,analysis_model=EXCLUDED.analysis_model,
+      analysis_at=EXCLUDED.analysis_at,updated_at=EXCLUDED.updated_at`,[
+      projectId,countryCode,kind,JSON.stringify(pros),JSON.stringify(cons),JSON.stringify(competitorIds),
+      successCount,status,model||'',analyzedAt
+    ]);
+}
+
+async function analyzeCompetitorReviews(projectId,countryCode,kind) {
+  const rows=await db.many(`SELECT * FROM project_competitors
+    WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3
+    ORDER BY monthly_revenue_local DESC,id LIMIT 5`,[projectId,countryCode,kind]);
+  if(!rows.length){const error=new Error('当前站点没有可分析的竞品');error.statusCode=400;throw error}
+  const pendingRows=rows.filter((row)=>row.review_analysis_status!=='complete');
+  const existingOverviews=await reviewOverviews(projectId,kind);
+  if(!pendingRows.length)return {
+    country_code:countryCode,competitor_kind:kind,total:rows.length,attempted:0,
+    analyzed:0,failed:0,skipped:rows.length,review_overview:existingOverviews[countryCode]||null
+  };
+  const existingSummaries=rows.filter((row)=>row.review_analysis_status==='complete').map((row)=>({
+    competitor_id:Number(row.id),
+    title:row.name||row.asin||'',
+    pros:jsonList(row.review_pros),
+    cons:jsonList(row.review_cons)
+  }));
+  const result=await reviewAnalysis.analyzeReviewBatch(pendingRows,{existingSummaries});
+  const analyzedAt=new Date().toISOString();
+  let newSuccessCount=0;let concurrentSkipped=0;
+  await db.transaction(async(client)=>{
+    for(const row of result.rows){
+      const updated=await client.query(`UPDATE project_competitors SET
+        top_reviews=$1,review_pros=$2,review_cons=$3,review_analysis_status=$4,
+        review_analysis_source=$5,review_analysis_warning=$6,review_analysis_model=$7,
+        review_analysis_at=$8,updated_at=$8
+        WHERE id=$9 AND project_id=$10 AND review_analysis_status<>'complete'`,[
+          JSON.stringify(row.topReviews||[]),JSON.stringify(row.pros||[]),JSON.stringify(row.cons||[]),
+          row.status,row.source||'',row.warning||'',result.model||'',analyzedAt,row.id,projectId
+        ]);
+      if(row.status==='complete'){
+        if(updated.rowCount)newSuccessCount+=1;
+        else concurrentSkipped+=1;
+      }
+    }
+    if(newSuccessCount){
+      const idPlaceholders=rows.map((_,index)=>`$${index+4}`).join(',');
+      const current=(await client.query(`SELECT id,review_pros,review_cons FROM project_competitors
+        WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3
+          AND id IN (${idPlaceholders}) AND review_analysis_status='complete'
+        ORDER BY monthly_revenue_local DESC,id`,[projectId,countryCode,kind,...rows.map((row)=>row.id)])).rows;
+      const previous=existingOverviews[countryCode];
+      const generatedPros=jsonList(result.overview?.pros);
+      const generatedCons=jsonList(result.overview?.cons);
+      const enough=current.length>=2;
+      await upsertReviewOverview(client,{
+        projectId,countryCode,kind,
+        pros:enough?(generatedPros.length?generatedPros:jsonList(previous?.pros)):[],
+        cons:enough?(generatedCons.length?generatedCons:jsonList(previous?.cons)):[],
+        competitorIds:current.map((row)=>Number(row.id)),
+        successCount:current.length,
+        status:enough?'complete':'insufficient',
+        model:result.model||previous?.analysis_model||'',
+        analyzedAt
+      });
+    }
+  });
+  const overviews=await reviewOverviews(projectId,kind);
+  const analyzed=newSuccessCount;
+  const reviewOverview=overviews[countryCode]||{
+    project_id:projectId,country_code:countryCode,competitor_kind:kind,
+    pros:[],cons:[],competitor_ids:[],success_count:0,status:'insufficient',
+    analysis_model:'',analysis_at:''
+  };
+  return {
+    country_code:countryCode,competitor_kind:kind,total:rows.length,attempted:result.rows.length,
+    analyzed,failed:result.rows.filter((row)=>row.status!=='complete').length,
+    skipped:rows.length-result.rows.length+concurrentSkipped,
+    warnings:result.rows.filter((row)=>row.warning).map((row)=>({id:row.id,message:row.warning})),
+    review_overview:reviewOverview,model:result.model
+  };
 }
 
 const competitorImportFields=['asin','image_url','product_url','is_fba','has_aplus','has_video','listing_date',
@@ -367,6 +469,17 @@ async function api(req,res,url) {
     return json(res,200,{ imported:rows.length,created,updated,discarded });
   }
 
+  const competitorReviewAnalyzeMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/(competitors|similar-competitors)\/review-analysis$/);
+  if(competitorReviewAnalyzeMatch&&method==='POST'){
+    const projectId=Number(competitorReviewAnalyzeMatch[1]);
+    const kind=competitorReviewAnalyzeMatch[2]==='similar-competitors'?'similar':'standard';
+    const project=await getProject(projectId);
+    if(!project)return json(res,404,{error:'品类不存在'});
+    const body=await readBody(req);const countryCode=String(body.country_code||'').toUpperCase();
+    if(!project.listings.some((item)=>item.country_code===countryCode))return json(res,400,{error:'站点不存在'});
+    return json(res,200,await analyzeCompetitorReviews(projectId,countryCode,kind));
+  }
+
   const competitorAnalyzeMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/competitors\/analyze$/);
   if (competitorAnalyzeMatch && method==='POST') {
     const projectId=Number(competitorAnalyzeMatch[1]);const project=await getProject(projectId);
@@ -403,7 +516,9 @@ async function api(req,res,url) {
   if (competitorListMatch && method==='GET') {
     const projectId=Number(competitorListMatch[1]);
     if (!await getProject(projectId)) return json(res,404,{ error:'品类不存在' });
-    return json(res,200,{ competitors:await listCompetitors(projectId,'standard'),competitor_counts:await competitorCounts(projectId,'standard') });
+    const overviews=await reviewOverviews(projectId,'standard');const values=Object.values(overviews);
+    return json(res,200,{ competitors:await listCompetitors(projectId,'standard'),competitor_counts:await competitorCounts(projectId,'standard'),
+      review_overviews:overviews,review_overview:values.length===1?values[0]:null });
   }
   if (competitorListMatch && method==='POST') {
     const projectId=Number(competitorListMatch[1]);const project=await getProject(projectId);
@@ -418,20 +533,34 @@ async function api(req,res,url) {
     if (!await getProject(projectId)) return json(res,404,{ error:'品类不存在' });
     const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();
     const result=countryCode
-      ? await db.query("DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='standard'",[projectId,countryCode])
-      : await db.query("DELETE FROM project_competitors WHERE project_id=$1 AND competitor_kind='standard'",[projectId]);
+      ? await db.transaction(async(client)=>{
+        const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='standard'",[projectId,countryCode]);
+        await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND country_code=$2 AND competitor_kind='standard'",[projectId,countryCode]);return deleted;
+      })
+      : await db.transaction(async(client)=>{
+        const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND competitor_kind='standard'",[projectId]);
+        await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind='standard'",[projectId]);return deleted;
+      });
     return json(res,200,{ ok:true,deleted:result.rowCount });
   }
 
   const similarListMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/similar-competitors$/);
   if (similarListMatch && method==='GET') {
     const projectId=Number(similarListMatch[1]);if(!await getProject(projectId))return json(res,404,{error:'品类不存在'});
-    return json(res,200,{competitors:await listCompetitors(projectId,'similar'),competitor_counts:await competitorCounts(projectId,'similar')});
+    const overviews=await reviewOverviews(projectId,'similar');const values=Object.values(overviews);
+    return json(res,200,{competitors:await listCompetitors(projectId,'similar'),competitor_counts:await competitorCounts(projectId,'similar'),
+      review_overviews:overviews,review_overview:values.length===1?values[0]:null});
   }
   if (similarListMatch && method==='DELETE') {
     const projectId=Number(similarListMatch[1]);if(!await getProject(projectId))return json(res,404,{error:'品类不存在'});
     const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();
-    const result=countryCode?await db.query("DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='similar'",[projectId,countryCode]):await db.query("DELETE FROM project_competitors WHERE project_id=$1 AND competitor_kind='similar'",[projectId]);
+    const result=countryCode?await db.transaction(async(client)=>{
+      const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='similar'",[projectId,countryCode]);
+      await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND country_code=$2 AND competitor_kind='similar'",[projectId,countryCode]);return deleted;
+    }):await db.transaction(async(client)=>{
+      const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND competitor_kind='similar'",[projectId]);
+      await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind='similar'",[projectId]);return deleted;
+    });
     return json(res,200,{ok:true,deleted:result.rowCount});
   }
 

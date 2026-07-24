@@ -1,6 +1,6 @@
 'use strict';
 
-const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},similarCompetitors:[],similarCounts:{},activeCompetitorSiteCode:'',activeSimilarSiteCode:'',competitorExpanded:true,competitorStatsExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',importKind:'standard',manualCountryCode:'',manualAnalysisCountryCode:'',manualAnalysisIds:[],clearCountryCode:'',clearKind:'standard',analyzingSiteCode:'',japanTariffPayload:null,japanTariffSelection:null,shareKey:'',newInstance:false,saving:0,pending:Promise.resolve()};
+const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},competitorReviewOverviews:{},similarCompetitors:[],similarCounts:{},similarReviewOverviews:{},activeCompetitorSiteCode:'',activeSimilarSiteCode:'',competitorExpanded:true,competitorStatsExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',importKind:'standard',manualCountryCode:'',manualAnalysisCountryCode:'',manualAnalysisIds:[],clearCountryCode:'',clearKind:'standard',analyzingSiteCode:'',reviewAnalyzingKey:'',reviewOverviewExpanded:{},japanTariffPayload:null,japanTariffSelection:null,shareKey:'',newInstance:false,saving:0,pending:Promise.resolve()};
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
@@ -137,7 +137,7 @@ async function saveJapanTax(event){
 }
 
 async function loadCompetitors(){
-  const [payload,similar]=await Promise.all([api(`/api/projects/${state.project.id}/competitors`),api(`/api/projects/${state.project.id}/similar-competitors`)]);state.competitors=payload.competitors||[];state.competitorCounts=payload.competitor_counts||{};state.similarCompetitors=similar.competitors||[];state.similarCounts=similar.competitor_counts||{};renderCompetitors();renderSimilarCompetitors();
+  const [payload,similar]=await Promise.all([api(`/api/projects/${state.project.id}/competitors`),api(`/api/projects/${state.project.id}/similar-competitors`)]);state.competitors=payload.competitors||[];state.competitorCounts=payload.competitor_counts||{};state.competitorReviewOverviews=payload.review_overviews||{};state.similarCompetitors=similar.competitors||[];state.similarCounts=similar.competitor_counts||{};state.similarReviewOverviews=similar.review_overviews||{};renderCompetitors();renderSimilarCompetitors();
 }
 function renderCompetitorSiteTabs(){
   $('#competitorSiteTabs').innerHTML=state.bootstrap.countries.map((country)=>`<button class="site-tab ${state.activeCompetitorSiteCode===country.code?'active':''}" type="button" data-competitor-country="${country.code}" aria-pressed="${state.activeCompetitorSiteCode===country.code}">${country.flag} ${marketCode(country.code)}</button>`).join('');
@@ -166,6 +166,30 @@ function competitorAnalysisText(item){
   if(item.analysis_status!=='complete'||!points.length)return '待分析';
   return `卖点：${points.join('、')}${difference.length?`｜差异：${difference.join('、')}`:''}`;
 }
+function reviewProsText(item){return storedList(item.review_pros).join('、')}
+function reviewConsText(item){return storedList(item.review_cons).join('、')}
+function reviewSummaryLabel(item){
+  if(item.review_analysis_status==='complete')return item.review_analysis_source==='url_context'?'查看总结 · 链接读取 ›':`查看总结 · ${storedList(item.top_reviews).length}条 ›`;
+  if(item.review_analysis_status==='failed')return '未获取到公开评论';
+  return '待分析';
+}
+function reviewSummaryCell(item,kind){
+  const complete=item.review_analysis_status==='complete';
+  return `<td class="competitor-review">${complete?`<button class="review-summary-link" type="button" data-review-detail="${kind}:${item.id}">${reviewSummaryLabel(item)}</button>`:`<span class="review-summary-state ${item.review_analysis_status==='failed'?'failed':''}">${reviewSummaryLabel(item)}</span>`}</td>`;
+}
+function reviewOverviewFor(kind,code){return (kind==='similar'?state.similarReviewOverviews:state.competitorReviewOverviews)[code]||null}
+function reviewOverviewHtml(kind,code){
+  const overview=reviewOverviewFor(kind,code);if(!overview)return '';
+  const key=`${kind}:${code}`,expanded=Boolean(state.reviewOverviewExpanded[key]),pros=storedList(overview.pros),cons=storedList(overview.cons);
+  const status=overview.status==='insufficient'?'有效竞品不足':`覆盖 ${Number(overview.success_count)||0} 个竞品`;
+  return `<div class="review-overview ${expanded?'expanded':''}"><button type="button" data-review-overview="${key}" aria-expanded="${expanded}"><b>前五评论总览</b><span>${escapeHtml(status)}</span><i>${expanded?'收起':'展开详情'} ›</i></button><div class="review-overview-detail" ${expanded?'':'hidden'}><div><strong>共同优点</strong><p>${pros.length?pros.map(escapeHtml).join('、'):'暂无共同结论'}</p></div><div><strong>共同缺点</strong><p>${cons.length?cons.map(escapeHtml).join('、'):'暂无共同结论'}</p></div></div></div>`;
+}
+function reviewActionLabel(kind,code,rows){
+  if(state.reviewAnalyzingKey===`${kind}:${code}`)return '分析中…';
+  const visible=rows.slice(0,5);if(visible.length&&visible.every((item)=>item.review_analysis_status==='complete'))return '已分析';
+  if(visible.some((item)=>item.review_analysis_status==='failed'))return '重试未完成';
+  return '评论分析';
+}
 function competitorRow(item,country){
   const rateClass=item.profit_rate==null?'':Number(item.profit_rate)>=0?'positive':'negative';
   const analysis=competitorAnalysisText(item);
@@ -178,6 +202,7 @@ function competitorRow(item,country){
     <td class="competitor-cost"><label class="competitor-cost-input"><span>¥</span><input type="number" min="0" step="0.01" data-competitor-cost-input="${item.id}" value="${inputNumber(item.cost_cny,2)}" aria-label="${escapeHtml(item.name||item.asin||'竞品')}采购成本"></label><button class="competitor-params-button" type="button" data-competitor-params="${item.id}">${item.uses_project_defaults?'跟随产品参数':'独立参数'}</button></td>
     <td class="profit-rate-cell competitor-profit ${rateClass}"><b>${item.profit_rate==null?'—':`${number(item.profit_rate,1)}%`}</b>${profitInfoIcon(item.calculation)}</td>
     <td class="competitor-analysis" title="${escapeHtml(analysis)}"><span>${escapeHtml(analysis)}</span></td>
+    ${reviewSummaryCell(item,'standard')}
     <td><div class="competitor-actions"><button class="delete-competitor" type="button" data-delete-competitor="${item.id}">删除</button></div></td>
   </tr>`;
 }
@@ -186,9 +211,9 @@ function renderCompetitors(){
   if(!selected.length){$('#competitorGroups').innerHTML='<div class="competitor-stats-empty">暂无可用竞品站点</div>';renderCompetitorStats();return}
   $('#competitorGroups').innerHTML=selected.map((country)=>{
     const rows=competitorRowsFor(country.code);const visible=rows.slice(0,5);const total=Number(state.competitorCounts[country.code]??rows.length);
-    const body=visible.length?visible.map((item)=>competitorRow(item,country)).join(''):'<tr><td class="competitor-empty" colspan="9">暂无竞品，可手动添加或导入 Excel</td></tr>';
+    const body=visible.length?visible.map((item)=>competitorRow(item,country)).join(''):'<tr><td class="competitor-empty" colspan="10">暂无竞品，可手动添加或导入 Excel</td></tr>';
     const sourceNames=[...new Set(rows.map((item)=>item.source_format).filter(Boolean).map((value)=>value==='seller_sprite'?'卖家精灵':value==='helium10'?'H10':value))];
-    return `<div class="competitor-site"><div class="competitor-site-head"><div><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><small>${total} 条竞品</small>${total>5?'<small class="display-limit">按月销售额显示前 5 条</small>':''}</div><div class="competitor-site-head-actions"><button class="copy-competitors" type="button" data-copy-competitors="${country.code}" ${visible.length?'':'disabled'}>复制表格</button><button class="import-competitors" type="button" data-import-competitors="${country.code}">导入 Excel</button><button class="add-competitor" type="button" data-add-competitor="${country.code}">+ 手动添加</button><button class="analyze-competitors" type="button" data-analyze-competitors="${country.code}" ${total&&state.analyzingSiteCode!==country.code?'':'disabled'}>${state.analyzingSiteCode===country.code?'分析中…':'卖点分析'}</button><button class="clear-competitors" type="button" data-clear-competitors="${country.code}" ${total?'':'disabled'}>清除本站</button></div></div><div class="competitor-table-wrap"><table class="competitor-table"><colgroup><col class="col-image"><col class="col-sale"><col class="col-link"><col class="col-revenue"><col class="col-rating"><col class="col-cost"><col class="col-profit"><col class="col-analysis"><col class="col-action"></colgroup><thead><tr><th>图片</th><th>售价</th><th>商品链接</th><th>月销售额（当地货币）</th><th>评分</th><th>竞品成本</th><th>预计利润率</th><th>卖点分析</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></div><div class="competitor-import-note"><b>导入来源：</b>${sourceNames.length?sourceNames.map(escapeHtml).join('、'):'手动录入'}；多次导入与手动数据自动取并集并按 ASIN 去重，每份 Excel 仅保留前 30 条，表格按月销售额从高到低排列；导入参数按 Excel 计算，成本默认继承产品并可在表格中直接修改。</div></div>`;
+    return `<div class="competitor-site"><div class="competitor-site-head"><div><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><small>${total} 条竞品</small>${total>5?'<small class="display-limit">按月销售额显示前 5 条</small>':''}</div><div class="competitor-site-head-actions"><button class="copy-competitors" type="button" data-copy-competitors="${country.code}" ${visible.length?'':'disabled'}>复制表格</button><button class="import-competitors" type="button" data-import-competitors="${country.code}">导入 Excel</button><button class="add-competitor" type="button" data-add-competitor="${country.code}">+ 手动添加</button><button class="analyze-competitors" type="button" data-analyze-competitors="${country.code}" ${total&&state.analyzingSiteCode!==country.code?'':'disabled'}>${state.analyzingSiteCode===country.code?'分析中…':'卖点分析'}</button><button class="analyze-reviews" type="button" data-review-analysis="standard:${country.code}" ${total&&state.reviewAnalyzingKey!==`standard:${country.code}`?'':'disabled'}>${reviewActionLabel('standard',country.code,rows)}</button><button class="clear-competitors" type="button" data-clear-competitors="${country.code}" ${total?'':'disabled'}>清除本站</button></div></div>${reviewOverviewHtml('standard',country.code)}<div class="competitor-table-wrap"><table class="competitor-table"><colgroup><col class="col-image"><col class="col-sale"><col class="col-link"><col class="col-revenue"><col class="col-rating"><col class="col-cost"><col class="col-profit"><col class="col-analysis"><col class="col-review"><col class="col-action"></colgroup><thead><tr><th>图片</th><th>售价</th><th>商品链接</th><th>月销售额（当地货币）</th><th>评分</th><th>竞品成本</th><th>预计利润率</th><th>卖点分析</th><th>评论分析</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></div><div class="competitor-import-note"><b>导入来源：</b>${sourceNames.length?sourceNames.map(escapeHtml).join('、'):'手动录入'}；多次导入与手动数据自动取并集并按 ASIN 去重，每份 Excel 仅保留前 30 条，表格按月销售额从高到低排列；导入参数按 Excel 计算，成本默认继承产品并可在表格中直接修改。</div></div>`;
   }).join('');
   $$('[data-competitor-price]').forEach((input)=>input.onchange=()=>saveCompetitor(input.dataset.competitorPrice,{sale_price:Number(input.value)||0}));
   $$('[data-competitor-cost-input]').forEach((input)=>{
@@ -217,12 +242,12 @@ function renderSimilarCompetitors(){
   $$('[data-similar-country]').forEach((button)=>button.onclick=()=>{state.activeSimilarSiteCode=button.dataset.similarCountry;renderSimilarCompetitors()});
   const country=state.bootstrap.countries.find((item)=>item.code===state.activeSimilarSiteCode);if(!country){$('#similarGroups').innerHTML='';return}
   const rows=similarRowsFor(country.code),visible=rows.slice(0,5),total=Number(state.similarCounts[country.code]??rows.length);
-  const body=visible.length?visible.map((item)=>`<tr><td class="competitor-image">${competitorImage(item)}</td><td class="competitor-link">${item.product_url?`<a href="${escapeHtml(item.product_url)}" target="_blank" rel="noopener">${escapeHtml(item.asin||'打开商品')}</a>`:'—'}</td><td>${escapeHtml(country.symbol)}${number(item.sale_price,2)}</td><td>${escapeHtml(country.symbol)}${number(item.monthly_revenue_local,2)}</td><td class="${Number(item.profit_rate)>=0?'positive':'negative'}">${item.profit_rate==null?'—':`${number(item.profit_rate,1)}%`}</td><td>${escapeHtml(item.listing_date||'—')}</td><td>${item.rating==null?'—':number(item.rating,1)}</td><td>${number(item.review_count,0)}</td></tr>`).join(''):'<tr><td class="competitor-empty" colspan="8">暂无同款式竞品，请导入 Excel</td></tr>';
-  $('#similarGroups').innerHTML=`<div class="competitor-site"><div class="competitor-site-head"><div><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><small>${total} 条同款式竞品</small>${total>5?'<small class="display-limit">按月销售额显示前 5 条</small>':''}</div><div class="competitor-site-head-actions"><button class="copy-competitors" type="button" data-copy-similar="${country.code}" ${visible.length?'':'disabled'}>复制表格</button><button class="import-competitors" type="button" data-import-similar="${country.code}">导入 Excel</button><button class="clear-competitors" type="button" data-clear-similar="${country.code}" ${total?'':'disabled'}>清除本站</button></div></div><div class="competitor-table-wrap"><table class="similar-table"><thead><tr><th>图片</th><th>链接</th><th>售价</th><th>销售额</th><th>利润率</th><th>上架时间</th><th>评分</th><th>评价数量</th></tr></thead><tbody>${body}</tbody></table></div><div class="competitor-import-note">成本始终跟随当前产品；重量、尺寸和品类采用 Excel 中每条商品自己的数据。</div></div>`;
+  const body=visible.length?visible.map((item)=>`<tr><td class="competitor-image">${competitorImage(item)}</td><td class="competitor-link">${item.product_url?`<a href="${escapeHtml(item.product_url)}" target="_blank" rel="noopener">${escapeHtml(item.asin||'打开商品')}</a>`:'—'}</td><td>${escapeHtml(country.symbol)}${number(item.sale_price,2)}</td><td>${escapeHtml(country.symbol)}${number(item.monthly_revenue_local,2)}</td><td class="${Number(item.profit_rate)>=0?'positive':'negative'}">${item.profit_rate==null?'—':`${number(item.profit_rate,1)}%`}</td><td>${escapeHtml(item.listing_date||'—')}</td><td>${item.rating==null?'—':number(item.rating,1)}</td><td>${number(item.review_count,0)}</td>${reviewSummaryCell(item,'similar')}</tr>`).join(''):'<tr><td class="competitor-empty" colspan="9">暂无同款式竞品，请导入 Excel</td></tr>';
+  $('#similarGroups').innerHTML=`<div class="competitor-site"><div class="competitor-site-head"><div><b>${country.flag} ${marketCode(country.code)} ${escapeHtml(country.name)}</b><small>${total} 条同款式竞品</small>${total>5?'<small class="display-limit">按月销售额显示前 5 条</small>':''}</div><div class="competitor-site-head-actions"><button class="copy-competitors" type="button" data-copy-similar="${country.code}" ${visible.length?'':'disabled'}>复制表格</button><button class="import-competitors" type="button" data-import-similar="${country.code}">导入 Excel</button><button class="analyze-reviews" type="button" data-review-analysis="similar:${country.code}" ${total&&state.reviewAnalyzingKey!==`similar:${country.code}`?'':'disabled'}>${reviewActionLabel('similar',country.code,rows)}</button><button class="clear-competitors" type="button" data-clear-similar="${country.code}" ${total?'':'disabled'}>清除本站</button></div></div>${reviewOverviewHtml('similar',country.code)}<div class="competitor-table-wrap"><table class="similar-table"><thead><tr><th>图片</th><th>链接</th><th>售价</th><th>销售额</th><th>利润率</th><th>上架时间</th><th>评分</th><th>评价数量</th><th>评论分析</th></tr></thead><tbody>${body}</tbody></table></div><div class="competitor-import-note">成本始终跟随当前产品；重量、尺寸和品类采用 Excel 中每条商品自己的数据。</div></div>`;
 }
 async function copySimilarTable(code){
   const country=state.bootstrap.countries.find((item)=>item.code===code),rows=similarRowsFor(code).slice(0,5);
-  const data=rows.map((item)=>[item.image_url?`=IMAGE("${String(item.image_url).replace(/"/g,'""')}")`:'',item.product_url||'',`${country.symbol}${number(item.sale_price,2)}`,`${country.symbol}${number(item.monthly_revenue_local,2)}`,item.profit_rate==null?'':`${number(item.profit_rate,1)}%`,item.listing_date||'',item.rating==null?'':number(item.rating,1),number(item.review_count,0)]);
+  const data=rows.map((item)=>[item.image_url?`=IMAGE("${String(item.image_url).replace(/"/g,'""')}")`:'',item.product_url||'',`${country.symbol}${number(item.sale_price,2)}`,`${country.symbol}${number(item.monthly_revenue_local,2)}`,item.profit_rate==null?'':`${number(item.profit_rate,1)}%`,item.listing_date||'',item.rating==null?'':number(item.rating,1),number(item.review_count,0),reviewProsText(item),reviewConsText(item)]);
   await writeRows(data);toast(`已复制 ${marketCode(code)} 站前 ${rows.length} 条同款式竞品`);
 }
 function beginCompetitorImport(code,kind='standard'){state.importCountryCode=code;state.importKind=kind;const input=$('#competitorExcelInput');input.value='';input.click()}
@@ -239,7 +264,7 @@ async function importCompetitorExcel(event){
 }
 async function copyCompetitorTable(code){
   const country=state.bootstrap.countries.find((item)=>item.code===code);const rows=competitorRowsFor(code).slice(0,5);
-  const data=rows.map((item)=>[item.image_url?`=IMAGE("${String(item.image_url).replace(/"/g,'""')}")`:'',`${country.symbol}${number(item.sale_price,2)}`,yesNoLabel(item.is_fba),yesNoLabel(item.has_aplus),yesNoLabel(item.has_video),item.listing_date||'',item.product_url||'',number(item.monthly_sales,0),`${country.symbol}${number(item.monthly_revenue_local,2)}`,`$${number(item.monthly_revenue_usd,2)}`,item.rating==null?'':number(item.rating,1),number(item.review_count,0),`¥${number(item.cost_cny,2)}`,item.profit_rate==null?'':`${number(item.profit_rate,1)}%`,competitorAnalysisText(item)]);
+  const data=rows.map((item)=>[item.image_url?`=IMAGE("${String(item.image_url).replace(/"/g,'""')}")`:'',`${country.symbol}${number(item.sale_price,2)}`,yesNoLabel(item.is_fba),yesNoLabel(item.has_aplus),yesNoLabel(item.has_video),item.listing_date||'',item.product_url||'',number(item.monthly_sales,0),`${country.symbol}${number(item.monthly_revenue_local,2)}`,`$${number(item.monthly_revenue_usd,2)}`,item.rating==null?'':number(item.rating,1),number(item.review_count,0),`¥${number(item.cost_cny,2)}`,item.profit_rate==null?'':`${number(item.profit_rate,1)}%`,competitorAnalysisText(item),reviewProsText(item),reviewConsText(item)]);
   await writeRows(data);toast(`已复制 ${marketCode(code)} 站前 ${rows.length} 条竞品表格（不含列名）`);
 }
 async function copyCompetitorStats(){
@@ -282,6 +307,44 @@ async function analyzeCompetitors(code){
   if(state.analyzingSiteCode)return;state.analyzingSiteCode=code;renderCompetitors();saving(true);
   try{let result;for(let attempt=0;attempt<3;attempt+=1){try{result=await api(`/api/projects/${state.project.id}/competitors/analyze`,{method:'POST',body:JSON.stringify({country_code:code})});break}catch(error){const transient=!error.status||error.status===408||error.status===425||error.status===429||error.status>=500;if(!transient||attempt===2)throw error;toast(`网络波动，正在重试 ${attempt+1}/2…`);await new Promise((resolve)=>setTimeout(resolve,1200*(attempt+1)))}}await loadCompetitors();saving(false);const failed=failedAnalysisRows(code);const summary=result.attempted===0?`前五竞品已有卖点，无需重复分析`:`本次分析 ${result.analyzed}/${result.attempted} 条${result.skipped?`，跳过已有结果 ${result.skipped} 条`:''}`;toast(failed.length?`${summary}，请补充 ${failed.length} 条竞品五点`:`${summary}，分析完成`);if(failed.length)openManualAnalysis(code,failed)}
   catch(error){saving(false,true);toast(error.message)}finally{state.analyzingSiteCode='';renderCompetitors()}
+}
+async function analyzeReviews(code,kind='standard'){
+  const key=`${kind}:${code}`,rows=(kind==='similar'?similarRowsFor(code):competitorRowsFor(code)).slice(0,5);
+  if(rows.length&&rows.every((item)=>item.review_analysis_status==='complete')){
+    state.reviewOverviewExpanded[key]=true;kind==='similar'?renderSimilarCompetitors():renderCompetitors();return;
+  }
+  if(state.reviewAnalyzingKey)return;state.reviewAnalyzingKey=key;kind==='similar'?renderSimilarCompetitors():renderCompetitors();saving(true);
+  try{
+    const endpoint=kind==='similar'?'similar-competitors':'competitors';
+    const result=await api(`/api/projects/${state.project.id}/${endpoint}/review-analysis`,{method:'POST',body:JSON.stringify({country_code:code})});
+    await loadCompetitors();
+    if(result.review_overview)(kind==='similar'?state.similarReviewOverviews:state.competitorReviewOverviews)[code]=result.review_overview;
+    saving(false);
+    const summary=result.attempted===0?'前五竞品已有评论总结':`评论分析完成 ${result.analyzed}/${result.attempted} 条`;
+    toast(result.failed?`${summary}，${result.failed} 条可稍后重试`:summary);
+  }catch(error){saving(false,true);toast(error.message)}
+  finally{state.reviewAnalyzingKey='';kind==='similar'?renderSimilarCompetitors():renderCompetitors()}
+}
+function openReviewDetail(kind,id){
+  const item=(kind==='similar'?state.similarCompetitors:state.competitors).find((row)=>Number(row.id)===Number(id));if(!item)return;
+  const country=state.bootstrap.countries.find((row)=>row.code===item.country_code);
+  $('#reviewDetailTitle').textContent=item.name||item.asin||'竞品评论总结';
+  $('#reviewDetailSubtitle').textContent=`${country?.flag||''} ${marketCode(item.country_code)} · 仅基于商品详情页公开 Top Reviews`;
+  const renderList=(values,empty)=>values.length?`<ul>${values.map((value)=>`<li>${escapeHtml(value)}</li>`).join('')}</ul>`:`<p class="review-detail-empty">${empty}</p>`;
+  $('#reviewDetailPros').innerHTML=renderList(storedList(item.review_pros),'暂无明确优点');
+  $('#reviewDetailCons').innerHTML=renderList(storedList(item.review_cons),'暂无明确缺点');
+  const reviews=storedList(item.top_reviews),source=item.review_analysis_source==='url_context'?'Gemini 链接读取':'Amazon 商品页抓取';
+  const sample=item.review_analysis_source==='url_context'?'评论条数无法确认':`${reviews.length} 条公开 Top Reviews`;
+  const at=item.review_analysis_at?new Date(item.review_analysis_at).toLocaleString('zh-CN'):'';
+  $('#reviewDetailMeta').innerHTML=`<span>样本：${escapeHtml(sample)}</span><span>来源：${escapeHtml(source)}</span>${at?`<span>分析时间：${escapeHtml(at)}</span>`:''}${item.review_analysis_warning?`<p>${escapeHtml(item.review_analysis_warning)}</p>`:''}`;
+  $('#reviewDetailModal').hidden=false;$('#reviewDetailModal .modal-close').focus();
+}
+function closeReviewDetail(){$('#reviewDetailModal').hidden=true}
+function handleReviewClick(target){
+  const analyze=target.closest('[data-review-analysis]');if(analyze){const [kind,code]=analyze.dataset.reviewAnalysis.split(':');analyzeReviews(code,kind);return true}
+  const detail=target.closest('[data-review-detail]');if(detail){const [kind,id]=detail.dataset.reviewDetail.split(':');openReviewDetail(kind,Number(id));return true}
+  const overview=target.closest('[data-review-overview]');if(overview){const key=overview.dataset.reviewOverview;state.reviewOverviewExpanded[key]=!state.reviewOverviewExpanded[key];key.startsWith('similar:')?renderSimilarCompetitors():renderCompetitors();return true}
+  return false;
 }
 function failedAnalysisRows(code,ids=null){
   const allowed=ids?new Set(ids.map(Number)):null;
@@ -448,10 +511,11 @@ function bindEvents(){
   $('#competitorStatsToggle').onclick=toggleCompetitorStats;
   $('#marketToggle').onclick=toggleMarketPanel;
   $('#competitorExcelInput').onchange=importCompetitorExcel;
-  $('#competitorGroups').onclick=(event)=>{const preview=event.target.closest('[data-preview-image]');if(preview)return openImagePreview(preview);const imported=event.target.closest('[data-import-competitors]');if(imported)return beginCompetitorImport(imported.dataset.importCompetitors);const copy=event.target.closest('[data-copy-competitors]');if(copy)return copyCompetitorTable(copy.dataset.copyCompetitors).catch((error)=>toast(error.message));const add=event.target.closest('[data-add-competitor]');if(add)return addCompetitor(add.dataset.addCompetitor);const analyze=event.target.closest('[data-analyze-competitors]');if(analyze)return analyzeCompetitors(analyze.dataset.analyzeCompetitors);const clear=event.target.closest('[data-clear-competitors]');if(clear)return clearCompetitors(clear.dataset.clearCompetitors);const params=event.target.closest('[data-competitor-params]');if(params)return openCostModal(Number(params.dataset.competitorParams));const remove=event.target.closest('[data-delete-competitor]');if(remove)return deleteCompetitor(Number(remove.dataset.deleteCompetitor))};
-  $('#similarGroups').onclick=(event)=>{const preview=event.target.closest('[data-preview-image]');if(preview)return openImagePreview(preview);const imported=event.target.closest('[data-import-similar]');if(imported)return beginCompetitorImport(imported.dataset.importSimilar,'similar');const copy=event.target.closest('[data-copy-similar]');if(copy)return copySimilarTable(copy.dataset.copySimilar).catch((error)=>toast(error.message));const clear=event.target.closest('[data-clear-similar]');if(clear)return clearCompetitors(clear.dataset.clearSimilar,'similar')};
+  $('#competitorGroups').onclick=(event)=>{if(handleReviewClick(event.target))return;const preview=event.target.closest('[data-preview-image]');if(preview)return openImagePreview(preview);const imported=event.target.closest('[data-import-competitors]');if(imported)return beginCompetitorImport(imported.dataset.importCompetitors);const copy=event.target.closest('[data-copy-competitors]');if(copy)return copyCompetitorTable(copy.dataset.copyCompetitors).catch((error)=>toast(error.message));const add=event.target.closest('[data-add-competitor]');if(add)return addCompetitor(add.dataset.addCompetitor);const analyze=event.target.closest('[data-analyze-competitors]');if(analyze)return analyzeCompetitors(analyze.dataset.analyzeCompetitors);const clear=event.target.closest('[data-clear-competitors]');if(clear)return clearCompetitors(clear.dataset.clearCompetitors);const params=event.target.closest('[data-competitor-params]');if(params)return openCostModal(Number(params.dataset.competitorParams));const remove=event.target.closest('[data-delete-competitor]');if(remove)return deleteCompetitor(Number(remove.dataset.deleteCompetitor))};
+  $('#similarGroups').onclick=(event)=>{if(handleReviewClick(event.target))return;const preview=event.target.closest('[data-preview-image]');if(preview)return openImagePreview(preview);const imported=event.target.closest('[data-import-similar]');if(imported)return beginCompetitorImport(imported.dataset.importSimilar,'similar');const copy=event.target.closest('[data-copy-similar]');if(copy)return copySimilarTable(copy.dataset.copySimilar).catch((error)=>toast(error.message));const clear=event.target.closest('[data-clear-similar]');if(clear)return clearCompetitors(clear.dataset.clearSimilar,'similar')};
   $$('[data-close-image-preview]').forEach((button)=>button.onclick=closeImagePreview);
-  document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&!$('#imagePreviewModal').hidden)closeImagePreview()});
+  $$('[data-close-review-detail]').forEach((button)=>button.onclick=closeReviewDetail);
+  document.addEventListener('keydown',(event)=>{if(event.key!=='Escape')return;if(!$('#reviewDetailModal').hidden)closeReviewDetail();else if(!$('#imagePreviewModal').hidden)closeImagePreview()});
   $('#competitorCostForm').onsubmit=saveCompetitorCost;
   $('#manualCompetitorForm').onsubmit=saveManualCompetitor;
   $$('[data-close-manual-competitor]').forEach((button)=>button.onclick=closeManualCompetitor);

@@ -74,6 +74,17 @@
       <figcaption id="imagePreviewCaption"></figcaption>
     </figure>
   </div>
+  <div class="competitor-modal" id="reviewDetailModal" hidden>
+    <div class="competitor-modal-backdrop" data-close-review-detail></div>
+    <section class="competitor-modal-card review-detail-card" role="dialog" aria-modal="true" aria-labelledby="reviewDetailTitle">
+      <div class="competitor-modal-head"><div><b id="reviewDetailTitle">竞品评论总结</b><small id="reviewDetailSubtitle"></small></div><button type="button" class="modal-close" data-close-review-detail aria-label="关闭">×</button></div>
+      <div class="review-detail-columns">
+        <section><b>优点</b><div id="reviewDetailPros"></div></section>
+        <section><b>缺点</b><div id="reviewDetailCons"></div></section>
+      </div>
+      <div class="review-detail-meta" id="reviewDetailMeta"></div>
+    </section>
+  </div>
   <div class="competitor-modal" id="manualCompetitorModal" hidden>
     <div class="competitor-modal-backdrop" data-close-manual-competitor></div>
     <form class="competitor-modal-card" id="manualCompetitorForm">
@@ -157,6 +168,6 @@
   <script src="./dimensions.js"></script>
   <script src="./exceljs.min.js"></script>
   <script src="./competitor-import.js?v=20260722-3"></script>
-  <script src="./embed.js?v=20260722-8"></script>
+  <script src="./embed.js?v=20260724-1"></script>
 </body>
 </html>
