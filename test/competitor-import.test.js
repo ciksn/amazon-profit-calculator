@@ -51,3 +51,24 @@ test('带空洞列的卖家精灵表头不会触发 Map 迭代错误',()=>{
   const row=[];row[0]='B0SPARSE001';row[5]='稀疏表头商品';row[6]='https://amazon.ca/dp/B0SPARSE001';row[7]='https://example.com/sparse.jpg';row[16]=100;row[19]=1999;row[23]=19.99;row[27]=888;row[29]=4.6;row[34]='2026-01-01';
   const [item]=parseRows(headers,[row],{countryCode:'CA',countryCnyPerLocal:5.2,usdCnyPerLocal:7.2});assert.equal(item.review_count,888);assert.equal(item.sale_price,19.99);
 });
+
+test('卖家精灵 A+ 页面和视频介绍按布尔可空语义解析',()=>{
+  const headers=['商品主图','商品详情页链接','ASIN','商品标题','价格','月销量','月销售额','A+页面','视频介绍'];
+  const rows=[
+    ['https://example.com/yes.jpg','https://amazon.com/dp/B0MEDIA001','B0MEDIA001','有媒体商品',20,10,200,'是','1'],
+    ['https://example.com/no.jpg','https://amazon.com/dp/B0MEDIA002','B0MEDIA002','无媒体商品',30,20,600,'否','0'],
+    ['https://example.com/unknown.jpg','https://amazon.com/dp/B0MEDIA003','B0MEDIA003','未知媒体商品',40,30,1200,'','']
+  ];
+  const [yes,no,unknown]=parseRows(headers,rows,{countryCode:'US'});
+  assert.equal(yes.has_aplus,true);assert.equal(yes.has_video,true);
+  assert.equal(no.has_aplus,false);assert.equal(no.has_video,false);
+  assert.equal(unknown.has_aplus,null);assert.equal(unknown.has_video,null);
+});
+
+test('H10 缺少 A+ 页面和视频介绍表头时保留 null',()=>{
+  const headers=['图片 URL','URL','ASIN','标题','价格','ASIN 销量','ASIN 收入'];
+  const rows=[['https://example.com/h10.jpg','https://amazon.com/dp/B0H10MEDIA','B0H10MEDIA','H10 商品',25,12,300]];
+  const [item]=parseRows(headers,rows,{countryCode:'US'});
+  assert.equal(item.has_aplus,null);
+  assert.equal(item.has_video,null);
+});

@@ -31,3 +31,22 @@ test('复制结果把评论优点和评论缺点紧跟在卖点分析后',()=>{
   assert.match(js,/competitorAnalysisText\(item\),reviewProsText\(item\),reviewConsText\(item\)/);
   assert.match(js,/copySimilarTable[\s\S]*reviewProsText\(item\),reviewConsText\(item\)/);
 });
+
+test('同款式竞品提供卖点分析按钮并把卖点列放在评论分析前',()=>{
+  assert.match(js,/data-analyze-similar="\$\{country\.code\}"/);
+  assert.match(js,/评价数量<\/th><th>卖点分析<\/th><th>评论分析/);
+  assert.match(js,/number\(item\.review_count,0\)\}<\/td>[\s\S]*competitorAnalysisText\(item\)[\s\S]*reviewSummaryCell\(item,'similar'\)/);
+});
+
+test('同款式复制严格输出包含可空 A+ 视频和卖点的 13 列',()=>{
+  assert.match(js,/item\.product_url\|\|'',optionalYesNoLabel\(item\.has_aplus\),optionalYesNoLabel\(item\.has_video\)/);
+  assert.match(js,/number\(item\.review_count,0\),competitorAnalysisText\(item\),reviewProsText\(item\),reviewConsText\(item\)/);
+  assert.match(js,/function optionalYesNoLabel\(value\)\{return value==null\?'':Number\(value\)\?'是':'否'\}/);
+});
+
+test('同款式页面表头不展示 A+ 或视频列',()=>{
+  const header=js.match(/<table class="similar-table"><thead><tr>(.*?)<\/tr><\/thead>/)?.[1]||'';
+  assert.ok(header,'应找到同款式表头');
+  assert.doesNotMatch(header,/>A\+</);
+  assert.doesNotMatch(header,/>视频</);
+});
