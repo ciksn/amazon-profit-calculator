@@ -480,13 +480,13 @@ async function api(req,res,url) {
     return json(res,200,await analyzeCompetitorReviews(projectId,countryCode,kind));
   }
 
-  const competitorAnalyzeMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/competitors\/analyze$/);
+  const competitorAnalyzeMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/(competitors|similar-competitors)\/analyze$/);
   if (competitorAnalyzeMatch && method==='POST') {
-    const projectId=Number(competitorAnalyzeMatch[1]);const project=await getProject(projectId);
+    const projectId=Number(competitorAnalyzeMatch[1]);const kind=competitorAnalyzeMatch[2]==='similar-competitors'?'similar':'standard';const project=await getProject(projectId);
     if (!project) return json(res,404,{ error:'品类不存在' });
     const body=await readBody(req);const countryCode=String(body.country_code||'').toUpperCase();
     if (!project.listings.some((item)=>item.country_code===countryCode)) return json(res,400,{ error:'站点不存在' });
-    const rows=await db.many("SELECT * FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='standard' ORDER BY monthly_revenue_local DESC,id LIMIT 5",[projectId,countryCode]);
+    const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3 ORDER BY monthly_revenue_local DESC,id LIMIT 5',[projectId,countryCode,kind]);
     if (!rows.length) return json(res,400,{ error:'当前站点没有可分析的竞品' });
     const manualById=new Map();
     if(Array.isArray(body.manual_rows))for(const source of body.manual_rows){

@@ -269,6 +269,38 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
       const allSimilarCleared=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`,{method:'DELETE'})).json();
       assert.equal(allSimilarCleared.deleted,6);
       assert.equal((await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json()).competitors.length,0);
+      const similarAnalysisRows=Array.from({length:6},(_,index)=>({...importPayload.rows[0],asin:`B0SIMAN0${index}`,name:`同款卖点竞品 ${index+1}`,product_url:`https://amazon.co.jp/dp/B0SIMAN0${index}`,monthly_revenue_local:4_000_000+index}));
+      await fetch(`${base}/api/projects/${created.id}/similar-competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:similarAnalysisRows})});
+      const standardBeforeSimilarAnalysis=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
+      const originalSimilarAnalyze=competitorAnalysis.analyzeCompetitorBatch;const similarAnalysisCalls=[];
+      competitorAnalysis.analyzeCompetitorBatch=async(rows)=>{
+        similarAnalysisCalls.push(rows.map((row)=>({id:Number(row.id),kind:row.competitor_kind,featureBullets:row.feature_bullets})));
+        return {model:'gemini-similar-test',rows:rows.map((row)=>({id:row.id,featureBullets:row.feature_bullets||['同款五点一'],sellingPoints:['同款便携设计'],differentiation:['同款差异化'],status:'complete',warning:''}))};
+      };
+      try {
+        const similarAnalysisResponse=await fetch(`${base}/api/projects/${created.id}/similar-competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})});
+        assert.equal(similarAnalysisResponse.status,200);
+        const similarAnalysis=await similarAnalysisResponse.json();
+        assert.equal(similarAnalysis.total,5);assert.equal(similarAnalysis.attempted,5);assert.equal(similarAnalysis.skipped,0);
+        assert.equal(similarAnalysisCalls.length,1);assert.equal(similarAnalysisCalls[0].length,5);assert.ok(similarAnalysisCalls[0].every((row)=>row.kind==='similar'));
+        const analyzedSimilarList=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json();
+        assert.ok(analyzedSimilarList.competitors.every((row)=>row.analysis_status==='complete'&&row.selling_points.includes('同款便携设计')));
+        const standardAfterSimilarAnalysis=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
+        assert.deepEqual(standardAfterSimilarAnalysis.competitors.map((row)=>({id:row.id,selling_points:row.selling_points})),standardBeforeSimilarAnalysis.competitors.map((row)=>({id:row.id,selling_points:row.selling_points})));
+        const repeatedSimilarAnalysis=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})})).json();
+        assert.equal(repeatedSimilarAnalysis.attempted,0);assert.equal(repeatedSimilarAnalysis.skipped,5);assert.equal(similarAnalysisCalls.length,1);
+        const manualSimilarAnalysis=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',manual_rows:[{id:similarAnalysisCalls[0][0].id,feature_bullets:['同款手动五点']}]})})).json();
+        assert.equal(manualSimilarAnalysis.attempted,1);assert.equal(manualSimilarAnalysis.skipped,4);assert.equal(similarAnalysisCalls.length,2);
+        assert.deepEqual(similarAnalysisCalls[1],[{id:similarAnalysisCalls[0][0].id,kind:'similar',featureBullets:['同款手动五点']}]);
+        const sixthSimilar=await db.one("SELECT id FROM project_competitors WHERE project_id=$1 AND country_code='JP' AND competitor_kind='similar' ORDER BY monthly_revenue_local DESC,id OFFSET 5 LIMIT 1",[created.id]);
+        const standardId=standardBeforeSimilarAnalysis.competitors[0].id;
+        const standardManualResponse=await fetch(`${base}/api/projects/${created.id}/similar-competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',manual_rows:[{id:standardId,feature_bullets:['不应接受']}]})});
+        assert.equal(standardManualResponse.status,400);
+        const sixthSimilarManualResponse=await fetch(`${base}/api/projects/${created.id}/similar-competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',manual_rows:[{id:sixthSimilar.id,feature_bullets:['不应接受']}]})});
+        assert.equal(sixthSimilarManualResponse.status,400);
+      } finally { competitorAnalysis.analyzeCompetitorBatch=originalSimilarAnalyze; }
+      const similarAnalysisCleared=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors?country_code=JP`,{method:'DELETE'})).json();
+      assert.equal(similarAnalysisCleared.deleted,6);
       await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'AU',name:'全部失败',asin:'B0ALLFAIL1',product_url:'https://www.amazon.com.au/dp/B0ALLFAIL1',monthly_revenue_local:1000})});
       const allFailedReview=await (await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'AU'})})).json();
       assert.equal(allFailedReview.analyzed,0);
