@@ -3,6 +3,7 @@
 (() => {
   const nativeFetch = window.fetch.bind(window);
   const storageKey = 'margingo-github-pages-v1';
+  const selectionStorageKey = 'margingo-selection-documents-v1';
   const cache = { rules:null,tariff:new Map() };
   const emptyState = () => ({ version:1,nextProjectId:1,nextCompetitorId:1,projects:[],listings:{},competitors:[],overrides:{} });
   const loadState = () => {
@@ -11,7 +12,17 @@
   };
   let local = loadState();
   const save = () => localStorage.setItem(storageKey,JSON.stringify(local));
-  window.addEventListener('storage',(event) => { if (event.key === storageKey) local = loadState(); });
+  const emptySelectionState = () => ({ version:1,nextSupplierId:1,documents:{},sites:{},suppliers:[] });
+  const loadSelectionState = () => {
+    try { const value=JSON.parse(localStorage.getItem(selectionStorageKey));return value?.version===1?{...emptySelectionState(),...value}:emptySelectionState(); }
+    catch { return emptySelectionState(); }
+  };
+  let selectionLocal=loadSelectionState();
+  const saveSelection=()=>localStorage.setItem(selectionStorageKey,JSON.stringify(selectionLocal));
+  window.addEventListener('storage',(event) => {
+    if (event.key === storageKey) local = loadState();
+    if (event.key === selectionStorageKey) selectionLocal=loadSelectionState();
+  });
   const json = (status,body) => new Response(JSON.stringify(body),{ status,headers:{ 'Content-Type':'application/json; charset=utf-8' } });
   const readBody = (options) => options?.body ? JSON.parse(options.body) : {};
   const tableName = (type) => ({ countries:'countries',sizes:'size_tiers',fba:'fba_rules',freight:'freight_rules',commission:'commission_rules' })[type] || type;
@@ -122,6 +133,143 @@
       .sort((a,b) => String(a.country_code).localeCompare(String(b.country_code)) || Number(a.id) - Number(b.id)).map(calculateCompetitor));
   }
 
+  const defaultChecklist=()=>[
+    {id:'compliance',label:'产品没有未解决的合规性风险',checked:false},
+    {id:'plug',label:'插头规格与目标站点一致',checked:false},
+    {id:'package',label:'已确认包装及全部配件',checked:false},
+    {id:'sample',label:'样品测试结果满足销售要求',checked:false},
+    {id:'labels',label:'警告标签、英代或欧代标签已确认',checked:false},
+    {id:'weee',label:'德国 WEEE 与电池法要求已确认',checked:false},
+    {id:'satisfaction',label:'对最终交付给顾客的产品满意',checked:false}
+  ];
+  function selectionDocument(projectId) {
+    const key=String(projectId);
+    return selectionLocal.documents[key] ||= {
+      project_id:Number(projectId),decision_status:'观察中',decision_reason:'',positioning:'',
+      use_scenarios:'',competitive_points:'',differentiation_items:[],review_issues:[],
+      overview_summary:'',competitor_summary:'',supplier_summary:'',patent_notes:'',
+      checklist:defaultChecklist(),version:0,updated_at:''
+    };
+  }
+  function validHttpUrl(value,label='链接') {
+    const text=String(value||'').trim();if(!text)return '';
+    try{const parsed=new URL(text);if(!['http:','https:'].includes(parsed.protocol))throw new Error();return parsed.toString()}
+    catch{throw new Error(`${label}只支持 HTTP 或 HTTPS 链接`)}
+  }
+  function selectionNumber(value,label,{nullable=false,max=Infinity}={}) {
+    if((value==null||value==='')&&nullable)return null;
+    const number=Number(value);
+    if(!Number.isFinite(number))throw new Error(`${label}必须是数字`);
+    if(number<0)throw new Error(`${label}不能为负数`);
+    if(number>max)throw new Error(`${label}超出允许范围`);
+    return number;
+  }
+  function validateSelectionSite(body) {
+    const output={};
+    for(const key of ['market_average_revenue','market_average_sales','certification_gap_cost']){
+      if(Object.hasOwn(body,key))output[key]=selectionNumber(body[key],key);
+    }
+    for(const key of ['new_product_friendliness','same_product_performance','opportunity_notes','certification_required','certification_actual','supplier_certifications','certification_gap','payback_period']){
+      if(Object.hasOwn(body,key))output[key]=String(body[key]??'').trim().slice(0,4000);
+    }
+    if(Object.hasOwn(body,'opportunity_status')){
+      if(!['','优先','观察','放弃'].includes(body.opportunity_status))throw new Error('机会判断不正确');
+      output.opportunity_status=body.opportunity_status;
+    }
+    return output;
+  }
+  function validateSelectionDocument(body) {
+    const version=Number(body.version);
+    if(!Number.isInteger(version)||version<0)throw new Error('版本号不正确');
+    const output={version};
+    for(const key of ['decision_status','decision_reason','positioning','use_scenarios','competitive_points','differentiation_items','review_issues','overview_summary','competitor_summary','supplier_summary','patent_notes','checklist']){
+      if(!Object.hasOwn(body,key))continue;
+      if(key==='decision_status'){
+        if(!['观察中','通过','淘汰'].includes(body[key]))throw new Error('决策状态不正确');
+        output[key]=body[key];
+      }else if(['differentiation_items','review_issues','checklist'].includes(key)){
+        if(!Array.isArray(body[key]))throw new Error(`${key}格式不正确`);
+        output[key]=body[key].slice(0,100);
+      }else output[key]=String(body[key]??'').trim().slice(0,10000);
+    }
+    return output;
+  }
+  function validateSelectionSupplier(body,partial=false) {
+    const output={};
+    const fields=['name','product_url','image_url','cost_cny','moq','specifications','certifications','sample_reason','pre_sample_score','post_sample_score','pros','cons','target_country_code','target_sale_price'];
+    for(const key of fields){
+      if(!Object.hasOwn(body,key))continue;
+      if(key==='product_url')output[key]=validHttpUrl(body[key],'商品链接');
+      else if(key==='image_url')output[key]=validHttpUrl(body[key],'图片链接');
+      else if(['cost_cny','moq','target_sale_price'].includes(key))output[key]=selectionNumber(body[key],key);
+      else if(['pre_sample_score','post_sample_score'].includes(key))output[key]=selectionNumber(body[key],key,{nullable:true,max:100});
+      else if(key==='target_country_code')output[key]=String(body[key]??'').trim().slice(0,8).toUpperCase();
+      else output[key]=String(body[key]??'').trim().slice(0,4000);
+    }
+    if(!partial)Object.assign(output,{
+      name:output.name??'',product_url:output.product_url??'',image_url:output.image_url??'',
+      cost_cny:output.cost_cny??0,moq:output.moq??0,specifications:output.specifications??'',
+      certifications:output.certifications??'',sample_reason:output.sample_reason??'',
+      pre_sample_score:output.pre_sample_score??null,post_sample_score:output.post_sample_score??null,
+      pros:output.pros??'',cons:output.cons??'',target_country_code:output.target_country_code??'',
+      target_sale_price:output.target_sale_price??0
+    });
+    return output;
+  }
+  function selectionRevenue(row,activeCountries) {
+    if(row.country_code==='AU')return {monthly_sales:Number(row.monthly_sales)||0,revenue:Number(row.monthly_revenue_local)||0,currency:'AUD',symbol:'A$'};
+    let revenue=Number(row.monthly_revenue_usd)||0;
+    if(!revenue){
+      const localRate=Number(activeCountries.find((item)=>item.code===row.country_code)?.cny_per_local)||0;
+      const usdRate=Number(activeCountries.find((item)=>item.code==='US')?.cny_per_local)||0;
+      if(localRate&&usdRate)revenue=(Number(row.monthly_revenue_local)||0)*localRate/usdRate;
+    }
+    return {monthly_sales:Number(row.monthly_sales)||0,revenue,currency:'USD',symbol:'$'};
+  }
+  async function selectionCalculation(project,listing,cost,salePrice) {
+    const activeCountries=await countries();const country=activeCountries.find((item)=>item.code===listing.country_code);
+    const fba=await rowsFor('fba');const sizes=await rowsFor('sizes');const freight=await rowsFor('freight');
+    return window.MarginGoProfit.calculateProfit({
+      project:{...project,cost_cny:Number(cost??project.cost_cny)||0},
+      country,listing:{...listing,sale_price:Number(salePrice??listing.sale_price)||0},
+      fbaRules:fba.filter((row)=>row.country_code===country.code),
+      sizeTiers:sizes.filter((row)=>row.country_code===country.code),
+      freightRule:freight.find((row)=>row.country_code===country.code)||null
+    });
+  }
+  async function selectionSupplier(row,project) {
+    const listing=project.listings.find((item)=>item.country_code===row.target_country_code);
+    if(!listing||Number(row.target_sale_price)<=0)return {...row,calculation:null};
+    const result=await selectionCalculation(project,listing,row.cost_cny,row.target_sale_price);
+    const invested=Number(result.product_cost||0)+Number(result.freight_fee||0);
+    return {...row,calculation:{...result,roi:invested?Number((Number(result.profit||0)/invested*100).toFixed(2)):0}};
+  }
+  async function selectionPayload(projectId) {
+    const project=await getProject(projectId);if(!project)return null;
+    const activeCountries=await countries();
+    const siteRows=activeCountries.map((country)=>({
+      project_id:Number(projectId),country_code:country.code,country_name:country.name,flag:country.flag,currency:country.currency,
+      market_average_revenue:0,market_average_sales:0,new_product_friendliness:'',same_product_performance:'',
+      opportunity_status:'',opportunity_notes:'',certification_required:'',certification_actual:'',
+      supplier_certifications:'',certification_gap:'',certification_gap_cost:0,payback_period:'',
+      ...(selectionLocal.sites[`${projectId}:${country.code}`]||{})
+    }));
+    const profits=[];
+    for(const listing of project.listings)profits.push({
+      country_code:listing.country_code,country_name:listing.country_name,flag:listing.flag,currency:listing.currency,
+      symbol:listing.symbol,sale_price:Number(listing.sale_price)||0,
+      calculation:Number(listing.sale_price)>0?await selectionCalculation(project,listing):null
+    });
+    const competitors=(await listCompetitors(projectId)).filter(Boolean);
+    const decorate=(row)=>({...row,selection_revenue:selectionRevenue(row,activeCountries)});
+    const suppliers=await Promise.all(selectionLocal.suppliers.filter((row)=>Number(row.project_id)===Number(projectId)).map((row)=>selectionSupplier(row,project)));
+    saveSelection();
+    return {project,document:selectionDocument(projectId),sites:siteRows,suppliers,profits,competitors:{
+      standard:competitors.filter((row)=>row.competitor_kind!=='similar').map(decorate),
+      similar:competitors.filter((row)=>row.competitor_kind==='similar').map(decorate)
+    }};
+  }
+
   function normalizeHs(value) {
     const digits = String(value || '').replace(/\D/g,'');
     if (![6,9,10].includes(digits.length)) throw new Error('请输入国内 10 位 HS 编码');
@@ -195,7 +343,10 @@
       const id = Number(projectMatch[1]); const before = local.projects.length; local.projects = local.projects.filter((item) => Number(item.id) !== id);
       for (const key of Object.keys(local.listings)) if (key.startsWith(`${id}:`)) delete local.listings[key];
       local.competitors = local.competitors.filter((item) => Number(item.project_id) !== id);
-      save(); return before === local.projects.length ? json(404,{ error:'品类不存在' }):json(200,{ ok:true });
+      delete selectionLocal.documents[String(id)];
+      for(const key of Object.keys(selectionLocal.sites))if(key.startsWith(`${id}:`))delete selectionLocal.sites[key];
+      selectionLocal.suppliers=selectionLocal.suppliers.filter((item)=>Number(item.project_id)!==id);
+      save();saveSelection(); return before === local.projects.length ? json(404,{ error:'品类不存在' }):json(200,{ ok:true });
     }
     const listingMatch = path.match(/^\/api\/projects\/(\d+)\/countries\/([A-Z]{2})$/);
     if (listingMatch && method === 'PUT') {
@@ -226,6 +377,52 @@
     if (competitorMatch && method === 'DELETE') {
       const id = Number(competitorMatch[1]); const before = local.competitors.length; local.competitors = local.competitors.filter((item) => Number(item.id) !== id);
       save(); return before === local.competitors.length ? json(404,{ error:'竞品不存在' }):json(200,{ ok:true });
+    }
+    const selectionDocumentMatch=path.match(/^\/api\/projects\/(\d+)\/selection-document$/);
+    if(selectionDocumentMatch&&method==='GET'){
+      const payload=await selectionPayload(selectionDocumentMatch[1]);
+      return payload?json(200,payload):json(404,{error:'品类不存在'});
+    }
+    if(selectionDocumentMatch&&method==='PUT'){
+      const project=await getProject(selectionDocumentMatch[1]);if(!project)return json(404,{error:'品类不存在'});
+      let body;try{body=validateSelectionDocument(readBody(options))}catch(error){return json(400,{error:error.message})}
+      const current=selectionDocument(selectionDocumentMatch[1]);
+      if(Number(body.version)!==Number(current.version))return json(409,{error:'数据已被他人更新，请刷新后再编辑'});
+      for(const key of ['decision_status','decision_reason','positioning','use_scenarios','competitive_points','differentiation_items','review_issues','overview_summary','competitor_summary','supplier_summary','patent_notes','checklist']){
+        if(Object.hasOwn(body,key))current[key]=body[key];
+      }
+      current.version+=1;current.updated_at=new Date().toISOString();saveSelection();return json(200,current);
+    }
+    const selectionSiteMatch=path.match(/^\/api\/projects\/(\d+)\/selection-document\/sites\/([A-Z]{2})$/);
+    if(selectionSiteMatch&&method==='PUT'){
+      const project=await getProject(selectionSiteMatch[1]);if(!project)return json(404,{error:'品类不存在'});
+      if(!project.listings.some((item)=>item.country_code===selectionSiteMatch[2]))return json(400,{error:'站点不存在'});
+      let body;try{body=validateSelectionSite(readBody(options))}catch(error){return json(400,{error:error.message})}
+      const key=`${selectionSiteMatch[1]}:${selectionSiteMatch[2]}`;
+      selectionLocal.sites[key]={...(selectionLocal.sites[key]||{}),...body,project_id:Number(selectionSiteMatch[1]),country_code:selectionSiteMatch[2],updated_at:new Date().toISOString()};
+      saveSelection();return json(200,selectionLocal.sites[key]);
+    }
+    const selectionSupplierCollection=path.match(/^\/api\/projects\/(\d+)\/selection-document\/suppliers$/);
+    if(selectionSupplierCollection&&method==='POST'){
+      const project=await getProject(selectionSupplierCollection[1]);if(!project)return json(404,{error:'品类不存在'});
+      let body;try{body=validateSelectionSupplier(readBody(options))}catch(error){return json(400,{error:error.message})}
+      if(body.target_country_code&&!project.listings.some((item)=>item.country_code===body.target_country_code))return json(400,{error:'站点不存在'});
+      const now=new Date().toISOString();const row={id:selectionLocal.nextSupplierId++,project_id:Number(project.id),
+        ...body,created_at:now,updated_at:now};
+      selectionLocal.suppliers.push(row);saveSelection();return json(201,await selectionSupplier(row,project));
+    }
+    const selectionSupplierMatch=path.match(/^\/api\/selection-suppliers\/(\d+)$/);
+    if(selectionSupplierMatch&&method==='PUT'){
+      const row=selectionLocal.suppliers.find((item)=>Number(item.id)===Number(selectionSupplierMatch[1]));if(!row)return json(404,{error:'供应商不存在'});
+      let body;try{body=validateSelectionSupplier(readBody(options),true)}catch(error){return json(400,{error:error.message})}
+      const project=await getProject(row.project_id);
+      if(body.target_country_code&&!project.listings.some((item)=>item.country_code===body.target_country_code))return json(400,{error:'站点不存在'});
+      Object.assign(row,body,{updated_at:new Date().toISOString()});saveSelection();return json(200,await selectionSupplier(row,await getProject(row.project_id)));
+    }
+    if(selectionSupplierMatch&&method==='DELETE'){
+      const id=Number(selectionSupplierMatch[1]);const before=selectionLocal.suppliers.length;
+      selectionLocal.suppliers=selectionLocal.suppliers.filter((item)=>Number(item.id)!==id);saveSelection();
+      return before===selectionLocal.suppliers.length?json(404,{error:'供应商不存在'}):json(200,{ok:true});
     }
     if (method === 'POST' && path === '/api/commission/match') { const body = readBody(options); return json(200,await matchCommission(body.country_code,body.text,body.sale_price)); }
     if (method === 'POST' && path === '/api/tariffs/japan/lookup') return json(200,await lookupTariff(readBody(options)));

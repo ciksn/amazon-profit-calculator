@@ -9,6 +9,16 @@ const { calculateProfit,findSalePriceForProfitRate } = require('./lib/profit');
 const { lookupJapanTariff } = require('./lib/japan-tariff');
 const competitorAnalysis = require('./lib/competitor-analysis');
 const reviewAnalysis = require('./lib/review-analysis');
+const {
+  DEFAULT_CHECKLIST,
+  DOCUMENT_FIELDS,
+  SUPPLIER_FIELDS,
+  defaultDocument,
+  validateDocumentPatch,
+  validateSiteInput,
+  validateSupplierInput,
+  competitorRevenue
+}=require('./lib/selection-document');
 const PORT = Number(process.env.PORT || 4173);
 const publicDir = path.join(__dirname,'public');
 const excelJsBrowserFile = require.resolve('exceljs/dist/exceljs.min.js');
@@ -121,6 +131,109 @@ async function listCompetitors(projectId,kind='standard') {
   const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 ORDER BY country_code,monthly_revenue_local DESC,id',[projectId,kind]);
   const perCountry={};const visible=rows.filter((row)=>(perCountry[row.country_code]=(perCountry[row.country_code]||0)+1)<=5);
   return Promise.all(visible.map(calculateCompetitor));
+}
+
+function validated(validator,body,...args) {
+  try { return validator(body,...args); }
+  catch (error) { error.statusCode=400;throw error; }
+}
+
+async function ensureSelectionDocument(projectId) {
+  const existing=await db.one('SELECT * FROM selection_documents WHERE project_id=$1',[projectId]);
+  if (existing) return existing;
+  const project=await db.one('SELECT id FROM projects WHERE id=$1',[projectId]);
+  if (!project) return null;
+  const defaults=defaultDocument(projectId);
+  return db.one(`INSERT INTO selection_documents
+    (project_id,decision_status,checklist,version,updated_at)
+    VALUES ($1,$2,$3,0,'') ON CONFLICT (project_id) DO UPDATE SET project_id=EXCLUDED.project_id
+    RETURNING *`,[projectId,defaults.decision_status,JSON.stringify(DEFAULT_CHECKLIST)]);
+}
+
+async function calculateSelectionListing(project,listing,costCny,salePrice) {
+  const country=await db.one('SELECT * FROM countries WHERE code=$1 AND active=TRUE',[listing.country_code]);
+  if (!country) return null;
+  const [fbaRules,sizeTiers,freightRule]=await Promise.all([
+    db.many('SELECT * FROM fba_rules WHERE country_code=$1',[country.code]),
+    db.many('SELECT * FROM size_tiers WHERE country_code=$1',[country.code]),
+    db.one('SELECT * FROM freight_rules WHERE country_code=$1',[country.code])
+  ]);
+  const result=calculateProfit({
+    project:{...project,cost_cny:Number(costCny??project.cost_cny)||0},
+    country,
+    listing:{...listing,sale_price:Number(salePrice??listing.sale_price)||0},
+    fbaRules,sizeTiers,freightRule
+  });
+  return result;
+}
+
+async function calculateSelectionSupplier(row,project=null) {
+  project||=await getProject(Number(row.project_id));
+  if (!project) return null;
+  const listing=project.listings.find((item)=>item.country_code===row.target_country_code);
+  if (!listing || Number(row.target_sale_price)<=0) return {...row,calculation:null};
+  const result=await calculateSelectionListing(project,listing,row.cost_cny,row.target_sale_price);
+  const invested=Number(result.product_cost||0)+Number(result.freight_fee||0);
+  return {
+    ...row,
+    calculation:{
+      ...result,
+      roi:invested>0?Number((Number(result.profit||0)/invested*100).toFixed(2)):0
+    }
+  };
+}
+
+async function selectionDocumentPayload(projectId) {
+  const project=await getProject(projectId);
+  if (!project) return null;
+  const document=await ensureSelectionDocument(projectId);
+  const [countries,siteRows,supplierRows,standardRows,similarRows]=await Promise.all([
+    db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority'),
+    db.many('SELECT * FROM selection_site_assessments WHERE project_id=$1',[projectId]),
+    db.many('SELECT * FROM selection_suppliers WHERE project_id=$1 ORDER BY id',[projectId]),
+    listCompetitors(projectId,'standard'),
+    listCompetitors(projectId,'similar')
+  ]);
+  const siteMap=new Map(siteRows.map((row)=>[row.country_code,row]));
+  const sites=countries.map((country)=>({
+    project_id:projectId,
+    country_code:country.code,
+    country_name:country.name,
+    flag:country.flag,
+    currency:country.currency,
+    market_average_revenue:0,
+    market_average_sales:0,
+    new_product_friendliness:'',
+    same_product_performance:'',
+    opportunity_status:'',
+    opportunity_notes:'',
+    certification_required:'',
+    certification_actual:'',
+    supplier_certifications:'',
+    certification_gap:'',
+    certification_gap_cost:0,
+    payback_period:'',
+    updated_at:'',
+    ...(siteMap.get(country.code)||{})
+  }));
+  const profits=[];
+  for (const listing of project.listings) {
+    const calculation=Number(listing.sale_price)>0?await calculateSelectionListing(project,listing):null;
+    profits.push({country_code:listing.country_code,country_name:listing.country_name,flag:listing.flag,
+      currency:listing.currency,symbol:listing.symbol,sale_price:Number(listing.sale_price)||0,calculation});
+  }
+  const decorate=(row)=>({...row,selection_revenue:competitorRevenue(row,countries)});
+  return {
+    project,
+    document,
+    sites,
+    suppliers:await Promise.all(supplierRows.map((row)=>calculateSelectionSupplier(row,project))),
+    profits,
+    competitors:{
+      standard:standardRows.filter(Boolean).map(decorate),
+      similar:similarRows.filter(Boolean).map(decorate)
+    }
+  };
 }
 
 async function competitorCounts(projectId,kind='standard') {
@@ -412,6 +525,79 @@ async function api(req,res,url) {
     return result.rowCount?json(res,200,{ ok:true }):json(res,404,{ error:'方案记录不存在' });
   }
 
+  const selectionDocumentMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/selection-document$/);
+  if (selectionDocumentMatch && method==='GET') {
+    const payload=await selectionDocumentPayload(Number(selectionDocumentMatch[1]));
+    return payload?json(res,200,payload):json(res,404,{error:'品类不存在'});
+  }
+  if (selectionDocumentMatch && method==='PUT') {
+    const projectId=Number(selectionDocumentMatch[1]);
+    const current=await ensureSelectionDocument(projectId);
+    if (!current) return json(res,404,{error:'品类不存在'});
+    const body=validated(validateDocumentPatch,await readBody(req));
+    const fields=DOCUMENT_FIELDS.filter((field)=>Object.hasOwn(body,field));
+    const now=new Date().toISOString();
+    const values=fields.map((field)=>['differentiation_items','review_issues','checklist'].includes(field)?JSON.stringify(body[field]):body[field]);
+    const assignments=fields.map((field,index)=>`${field}=$${index+1}`);
+    assignments.push(`version=version+1`,`updated_at=$${fields.length+1}`);
+    const result=await db.query(`UPDATE selection_documents SET ${assignments.join(',')}
+      WHERE project_id=$${fields.length+2} AND version=$${fields.length+3}`,
+      [...values,now,projectId,body.version]);
+    if (!result.rowCount) return json(res,409,{error:'数据已被他人更新，请刷新后再编辑'});
+    return json(res,200,await db.one('SELECT * FROM selection_documents WHERE project_id=$1',[projectId]));
+  }
+
+  const selectionSiteMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/selection-document\/sites\/([A-Z]{2})$/);
+  if (selectionSiteMatch && method==='PUT') {
+    const projectId=Number(selectionSiteMatch[1]);const countryCode=selectionSiteMatch[2];
+    if (!await db.one('SELECT id FROM projects WHERE id=$1',[projectId])) return json(res,404,{error:'品类不存在'});
+    if (!await db.one('SELECT code FROM countries WHERE code=$1 AND active=TRUE',[countryCode])) return json(res,400,{error:'站点不存在'});
+    const body=validated(validateSiteInput,await readBody(req));
+    const fields=Object.keys(body);const now=new Date().toISOString();
+    await db.query(`INSERT INTO selection_site_assessments (project_id,country_code,updated_at)
+      VALUES ($1,$2,$3) ON CONFLICT (project_id,country_code) DO UPDATE SET updated_at=EXCLUDED.updated_at`,
+      [projectId,countryCode,now]);
+    if (fields.length) await db.query(updateSql('selection_site_assessments',[...fields,'updated_at'],
+      `project_id=$${fields.length+2} AND country_code=$${fields.length+3}`),
+      [...fields.map((field)=>body[field]),now,projectId,countryCode]);
+    return json(res,200,await db.one('SELECT * FROM selection_site_assessments WHERE project_id=$1 AND country_code=$2',[projectId,countryCode]));
+  }
+
+  const selectionSupplierCollectionMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/selection-document\/suppliers$/);
+  if (selectionSupplierCollectionMatch && method==='POST') {
+    const projectId=Number(selectionSupplierCollectionMatch[1]);const project=await getProject(projectId);
+    if (!project) return json(res,404,{error:'品类不存在'});
+    const body=validated(validateSupplierInput,await readBody(req));
+    if (body.target_country_code && !project.listings.some((item)=>item.country_code===body.target_country_code)) {
+      return json(res,400,{error:'站点不存在'});
+    }
+    const now=new Date().toISOString();
+    const row=await db.one(`INSERT INTO selection_suppliers
+      (project_id,${SUPPLIER_FIELDS.join(',')},created_at,updated_at)
+      VALUES ($1,${SUPPLIER_FIELDS.map((_,index)=>`$${index+2}`).join(',')},$${SUPPLIER_FIELDS.length+2},$${SUPPLIER_FIELDS.length+2})
+      RETURNING *`,[projectId,...SUPPLIER_FIELDS.map((field)=>body[field]),now]);
+    return json(res,201,await calculateSelectionSupplier(row,project));
+  }
+
+  const selectionSupplierMatch=url.pathname.match(/^\/api\/selection-suppliers\/(\d+)$/);
+  if (selectionSupplierMatch && method==='PUT') {
+    const id=Number(selectionSupplierMatch[1]);const existing=await db.one('SELECT * FROM selection_suppliers WHERE id=$1',[id]);
+    if (!existing) return json(res,404,{error:'供应商不存在'});
+    const body=validated(validateSupplierInput,await readBody(req),true);
+    if (body.target_country_code) {
+      const validCountry=await db.one('SELECT 1 FROM project_countries WHERE project_id=$1 AND country_code=$2',[existing.project_id,body.target_country_code]);
+      if (!validCountry) return json(res,400,{error:'站点不存在'});
+    }
+    const fields=Object.keys(body);
+    if (fields.length) await db.query(updateSql('selection_suppliers',[...fields,'updated_at'],
+      `id=$${fields.length+2}`),[...fields.map((field)=>body[field]),new Date().toISOString(),id]);
+    return json(res,200,await calculateSelectionSupplier(await db.one('SELECT * FROM selection_suppliers WHERE id=$1',[id])));
+  }
+  if (selectionSupplierMatch && method==='DELETE') {
+    const result=await db.query('DELETE FROM selection_suppliers WHERE id=$1',[Number(selectionSupplierMatch[1])]);
+    return result.rowCount?json(res,200,{ok:true}):json(res,404,{error:'供应商不存在'});
+  }
+
   const projectMatch=url.pathname.match(/^\/api\/projects\/(\d+)$/);
   if (projectMatch && method==='GET') {
     const project=await getProject(Number(projectMatch[1]));
@@ -643,7 +829,11 @@ const server=http.createServer(async (req,res)=>{
     applyCors(req,res);if (req.method==='OPTIONS') { res.writeHead(204);return res.end(); }
     if (url.pathname.startsWith('/api/')) return await api(req,res,url);
     return staticFile(req,res,url);
-  } catch (error) { console.error(error);return json(res,Number(error.statusCode)||500,{ error:error.message || '服务器异常' }); }
+  } catch (error) {
+    const status=Number(error.statusCode)||500;
+    if(status>=500)console.error(error);
+    return json(res,status,{ error:error.message || '服务器异常' });
+  }
 });
 
 /* node:coverage ignore next 3 */

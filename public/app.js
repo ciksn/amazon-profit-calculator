@@ -261,6 +261,7 @@ function categoryCard(project,index) {
       </button>
       <div class="category-sites"><small>测算站点</small><div>${siteButtons}</div></div>
       <div class="category-row-actions">
+        <a class="copy-category" href="./selection-document.html?project=${project.id}">选品文档</a>
         <button class="copy-category" type="button" data-copy-site-profit="${project.id}" title="复制站点、产品名、售价和利润率">各站点利润率</button>
         <button class="delete-category" type="button" data-delete-project="${project.id}" aria-label="删除品类" title="删除品类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button>
         <button class="edit-category" type="button" data-edit-project="${project.id}" aria-label="编辑 ${escapeHtml(project.name)}" title="编辑品类信息">编辑</button>

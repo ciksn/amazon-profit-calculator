@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>选品文档 · MarginGo</title>
+  <link rel="stylesheet" href="./selection-document.css?v=20260728-1">
+</head>
+<body>
+  <header class="topbar">
+    <a class="back-link" href="./index.html">← 利润率计算器</a>
+    <div class="title-group">
+      <span>选品文档</span>
+      <h1 id="projectTitle">正在载入品类…</h1>
+    </div>
+    <div class="save-wrap">
+      <span class="save-state" id="saveState">正在载入…</span>
+      <button id="retrySave" type="button" hidden>重试</button>
+    </div>
+  </header>
+
+  <section class="summary-strip" aria-label="选品摘要">
+    <div><small>决策状态</small><b id="decisionStatus">观察中</b></div>
+    <div><small>最佳站点</small><b id="bestSiteMetric">—</b></div>
+    <div><small>目标利润率</small><b id="targetMarginMetric">—</b></div>
+    <div><small>首选供应商</small><b id="preferredSupplierMetric">—</b></div>
+    <div><small>资料完成度</small><b id="completionMetric">0%</b></div>
+  </section>
+
+  <div class="workspace">
+    <aside class="chapter-nav" aria-label="选品文档章节">
+      <button class="active" type="button" data-chapter="overview"><span>01</span>选品概览</button>
+      <button type="button" data-chapter="sites"><span>02</span>站点机会</button>
+      <button type="button" data-chapter="competitors"><span>03</span>竞品洞察</button>
+      <button type="button" data-chapter="suppliers"><span>04</span>供应商决赛</button>
+      <button type="button" data-chapter="risks"><span>05</span>风险与自查</button>
+    </aside>
+
+    <main class="chapter-content">
+      <section class="chapter active" data-chapter-panel="overview">
+        <div class="chapter-heading"><div><small>01 · PRODUCT BRIEF</small><h2>选品概览</h2><p>把调研结论压缩成团队能快速复核的产品判断。</p></div></div>
+        <div id="overviewContent"></div>
+      </section>
+      <section class="chapter" data-chapter-panel="sites">
+        <div class="chapter-heading"><div><small>02 · MARKET OPPORTUNITY</small><h2>站点机会</h2><p>结合利润卡片和市场数据判断优先站点。</p></div></div>
+        <div id="sitesContent"></div>
+      </section>
+      <section class="chapter" data-chapter-panel="competitors">
+        <div class="chapter-heading"><div><small>03 · COMPETITOR INSIGHT</small><h2>竞品洞察</h2><p>普通与同款竞品统一展示销量、销售额、利润与评论洞察。</p></div></div>
+        <div id="competitorsContent"></div>
+      </section>
+      <section class="chapter" data-chapter-panel="suppliers">
+        <div class="chapter-heading"><div><small>04 · SUPPLIER FINAL</small><h2>供应商决赛</h2><p>用样品评分、利润率和 ROI 比较候选产品。</p></div></div>
+        <div id="suppliersContent"></div>
+      </section>
+      <section class="chapter" data-chapter-panel="risks">
+        <div class="chapter-heading"><div><small>05 · RISK GATE</small><h2>风险与自查</h2><p>确认认证、专利与交付检查项后再做最终决定。</p></div></div>
+        <div id="risksContent"></div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="./config.js"></script>
+  <script src="./profit-engine.js"></script>
+  <script src="./static-api.js"></script>
+  <script src="./selection-document.js?v=20260728-1"></script>
+</body>
+</html>
