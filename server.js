@@ -9,7 +9,7 @@ const { calculateProfit,findSalePriceForProfitRate } = require('./lib/profit');
 const { lookupJapanTariff } = require('./lib/japan-tariff');
 const competitorAnalysis = require('./lib/competitor-analysis');
 const reviewAnalysis = require('./lib/review-analysis');
-const {handleSelectionAiRequest}=require('./lib/selection-ai/routes');
+const {handleSelectionAiRequest,sendSelectionAiError}=require('./lib/selection-ai/routes');
 const {createDefaultSelectionAiService}=require('./lib/selection-ai/service');
 const {
   DEFAULT_CHECKLIST,
@@ -844,10 +844,14 @@ function createServer({selectionAiService,selectionAiServiceFactory=createDefaul
     applyCors(req,res);if (req.method==='OPTIONS') { res.writeHead(204);return res.end(); }
     if (url.pathname.startsWith('/api/')) {
       if (url.pathname.match(/^\/api\/projects\/\d+\/selection-ai(?:\/|$)/)) {
-        const handled=await handleSelectionAiRequest({
-          req,res,url,service:getSelectionAiService(),readBody,json
-        });
-        if (handled) return;
+        try {
+          const handled=await handleSelectionAiRequest({
+            req,res,url,service:getSelectionAiService(),readBody,json
+          });
+          if (handled) return;
+        } catch (error) {
+          return sendSelectionAiError({res,error,json});
+        }
       }
       return await api(req,res,url);
     }

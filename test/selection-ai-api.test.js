@@ -244,6 +244,23 @@ test('selection AI API sanitizes database, network and forged stable-code diagno
   });
 });
 
+test('selection AI API sanitizes synchronous owned service factory failures',async()=>{
+  const server=createServer({selectionAiServiceFactory:()=>{
+    throw Object.assign(new Error('factory-secret-value'),{code:'23503',statusCode:418});
+  }});
+  await new Promise((resolve)=>server.listen(0,'127.0.0.1',resolve));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  try {
+    const response=await fetch(`${base}/api/projects/7/selection-ai`);
+    assert.equal(response.status,500);
+    const body=await response.json();
+    assert.deepEqual(body,{code:'INTERNAL_ERROR',error:'Internal server error'});
+    assert.doesNotMatch(JSON.stringify(body),/factory-secret-value|23503|418/);
+  } finally {
+    await server.shutdown();
+  }
+});
+
 test('selection AI interrupt rejects malformed percent encoding as validation error',async()=>{
   const service=createFakeService();
   await withServer(service,async(base)=>{
