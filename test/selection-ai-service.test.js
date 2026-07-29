@@ -227,6 +227,25 @@ test('health reports both Provider failures without starting a turn',async(t)=>{
   assert.equal(openai.calls,0);
 });
 
+test('health can probe only Codex without touching the OpenAI Provider',async(t)=>{
+  const project=await createProject('AI Codex-only health');
+  const codex=fakeProviderThatReplies();
+  const openai=fakeProviderThatReplies();
+  openai.health=async()=>{
+    openai.healthCalls+=1;
+    throw new Error('OpenAI health must not be called');
+  };
+  const service=createService({codex,openai});
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+
+  assert.deepEqual(await service.health(project.id,{providers:['codex']}),{
+    active_provider:'codex',
+    providers:{codex:{ok:true,status:'ready'}}
+  });
+  assert.equal(codex.healthCalls,1);
+  assert.equal(openai.healthCalls,0);
+});
+
 test('every project-scoped service entry rejects an unknown project before repository or Provider work',async(t)=>{
   const projectId=2_000_000_000;
   const codex=fakeProviderThatReplies();

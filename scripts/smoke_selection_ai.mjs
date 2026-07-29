@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {
+  cleanupTemporaryProjects,
+  createSmokeProjectName,
+  runAllCleanupSteps,
+  validateCodexHealth
+} from './smoke_selection_ai_lib.mjs';
 
 const require=createRequire(import.meta.url);
 const db=require('../lib/db');
@@ -11,7 +17,7 @@ if (!String(process.env.DATABASE_URL||'').trim()) {
 }
 
 const terminalTimeoutMs=120_000;
-const projectName=`AI 冒烟测试 ${Date.now()}`;
+const projectName=createSmokeProjectName();
 let projectId=null;
 let baseUrl='';
 let cleanupConfirmed=false;
@@ -73,29 +79,6 @@ async function readTerminalSse(response,signal) {
   throw new Error('Codex SSE ended without a completed or error terminal event');
 }
 
-async function cleanupProject() {
-  if (projectId==null) return;
-  let httpDeleteError=null;
-  try {
-    const response=await fetch(`${baseUrl}/api/projects/${projectId}`,{method:'DELETE'});
-    if (!response.ok&&response.status!==404) {
-      throw new Error(`temporary project delete returned HTTP ${response.status}`);
-    }
-  } catch (error) {
-    httpDeleteError=error;
-  }
-
-  let remaining=await db.one('SELECT COUNT(*)::int AS count FROM projects WHERE id=$1',[projectId]);
-  if (Number(remaining?.count)>0) {
-    await db.query('DELETE FROM projects WHERE id=$1',[projectId]);
-    remaining=await db.one('SELECT COUNT(*)::int AS count FROM projects WHERE id=$1',[projectId]);
-  }
-  assert.equal(Number(remaining?.count),0,'temporary smoke project was not deleted');
-  cleanupConfirmed=true;
-  console.log(`\n临时项目已删除：${projectName}`);
-  if (httpDeleteError) throw httpDeleteError;
-}
-
 try {
   await db.ready();
   await new Promise((resolve,reject)=>{
@@ -115,10 +98,9 @@ try {
   projectId=project.id;
   assert.ok(Number.isSafeInteger(projectId)&&projectId>0,'temporary project ID is invalid');
 
-  const health=await jsonRequest(`/api/projects/${projectId}/selection-ai/health`);
-  const codexHealth=health?.providers?.codex||health?.codex;
-  assert.notEqual(codexHealth?.status,'not_installed','Codex executable is not installed');
-  console.log(`Codex health: ${codexHealth?.status||'unknown'} (${codexHealth?.ok?'ok':'not ready'})`);
+  const health=await jsonRequest(`/api/projects/${projectId}/selection-ai/health?provider=codex`);
+  const codexHealth=validateCodexHealth(health);
+  console.log(`Codex health: ${codexHealth.status} (ok)`);
 
   const controller=new AbortController();
   const timer=setTimeout(
@@ -129,7 +111,7 @@ try {
     const response=await fetch(`${baseUrl}/api/projects/${projectId}/selection-ai/turns`,{
       method:'POST',
       headers:{'content-type':'application/json'},
-      body:JSON.stringify({chapter:'overview',message:'只回复当前测试品类名称，不提出修改'}),
+      body:JSON.stringify({chapter:'overview',message:'只回复当前测试品类名称，不提出修改。'}),
       signal:controller.signal
     });
     const terminal=await readTerminalSse(response,controller.signal);
@@ -141,19 +123,20 @@ try {
 } catch (error) {
   primaryError=error;
 } finally {
-  let cleanupError=null;
-  try { await cleanupProject(); }
-  catch (error) { cleanupError=error; }
-  service.dispose();
-  try { await server.shutdown(); }
-  catch (error) { cleanupError||=error; }
-  try { await db.close(); }
-  catch (error) { cleanupError||=error; }
-  if (cleanupError) {
-    if (primaryError) primaryError=new AggregateError([primaryError,cleanupError],'Smoke test and cleanup both failed');
-    else primaryError=cleanupError;
-  }
+  primaryError=await runAllCleanupSteps({
+    primaryError,
+    steps:[
+      ['temporary project cleanup',async()=>{
+        const result=await cleanupTemporaryProjects({db,baseUrl,projectId,projectName});
+        cleanupConfirmed=result.confirmed;
+        console.log(`\n临时项目已删除：${projectName}`);
+      }],
+      ['service.dispose',async()=>{ await service.dispose(); }],
+      ['server.shutdown',async()=>{ await server.shutdown(); }],
+      ['db.close',async()=>{ await db.close(); }]
+    ]
+  });
 }
 
-if (projectId!=null) assert.equal(cleanupConfirmed,true,'temporary project cleanup was not confirmed');
+if (!primaryError) assert.equal(cleanupConfirmed,true,'temporary project cleanup was not confirmed');
 if (primaryError) throw primaryError;

@@ -43,7 +43,7 @@ npm.cmd start
 
 ## 选品文档 AI 助手
 
-先确认 Codex CLI 已安装、已完成登录并可从 `PATH` 运行；需要自定义命令路径或超时时间时，在 `.env` 中设置 `CODEX_COMMAND` 和 `CODEX_AI_TIMEOUT_MS`。启动服务后打开品类首页创建或选择一个品类，也可以直接访问：
+先确认 Codex CLI 已安装、已完成登录并可从 `PATH` 运行。默认不需要设置 `CODEX_COMMAND`：Windows 会从 `PATH` 中的官方 npm 包自动解析对应架构的原生 `codex.exe`，并直接启动它（不经过 shell）。只有在需要覆盖命令时才在 `.env` 中设置 `CODEX_COMMAND`；Windows 的覆盖值必须指向原生 `.exe`，不要指向 `codex.cmd` 或 `codex.ps1`。超时时间可通过 `CODEX_AI_TIMEOUT_MS` 调整。启动服务后打开品类首页创建或选择一个品类，也可以直接访问：
 
 ```text
 http://127.0.0.1:4173/selection-document.html?project=<id>

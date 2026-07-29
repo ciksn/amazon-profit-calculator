@@ -30,8 +30,8 @@ function createFakeService() {
       if (projectId===500) throw serviceError('23503','postgres detail: secret-row-value');
       return state;
     },
-    async health(projectId) {
-      calls.push(['health',projectId]);
+    async health(projectId,options) {
+      calls.push(['health',projectId,options]);
       return {provider:'codex',ok:true,status:'ready'};
     },
     async setProvider(projectId,provider) {
@@ -100,6 +100,13 @@ test('selection AI API exposes state, health, provider, SSE, interrupt, proposal
     assert.deepEqual(health.body.codex,health.body.providers.codex);
     assert.deepEqual(health.body.openai,health.body.providers.openai);
     assert.equal(service.calls.some(([name])=>name==='streamTurn'),false);
+
+    const codexOnlyHealth=await requestJson(`${base}/api/projects/7/selection-ai/health?provider=codex`);
+    assert.equal(codexOnlyHealth.response.status,200);
+    assert.deepEqual(
+      service.calls.filter(([name])=>name==='health').at(-1),
+      ['health',7,{providers:['codex']}]
+    );
 
     const provider=await requestJson(`${base}/api/projects/7/selection-ai/provider`,{
       method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({provider:'openai'})
