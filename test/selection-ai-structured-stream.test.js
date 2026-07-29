@@ -28,6 +28,33 @@ test('withholds incomplete unicode escapes until all four hex digits arrive', ()
   assert.deepEqual(parser.finish(), { answer: 'A你', proposal: {} });
 });
 
+test('holds an escaped non-BMP character until its low surrogate arrives in a later fragment', () => {
+  const parser = createStructuredAnswerStream();
+
+  assert.equal(parser.push('{"answer":"\\uD83D'), '');
+  assert.equal(parser.push('\\uDE00","proposal":{}}'), '😀');
+  assert.deepEqual(parser.finish(), { answer: '😀', proposal: {} });
+});
+
+test('rejects unmatched escaped surrogate halves without streaming them', () => {
+  for (const raw of [
+    '{"answer":"\\uD83D","proposal":{}}',
+    '{"answer":"\\uDE00","proposal":{}}'
+  ]) {
+    const parser = createStructuredAnswerStream();
+    assert.throws(() => parser.push(raw), /结构化输出无效/);
+    assert.throws(() => parser.finish(), /结构化输出无效/);
+  }
+});
+
+test('rejects a duplicate top-level answer before streaming its second value', () => {
+  const parser = createStructuredAnswerStream();
+
+  assert.equal(parser.push('{"answer":"first"'), 'first');
+  assert.throws(() => parser.push(',"answer":"final","proposal":{}}'), /结构化输出无效/);
+  assert.throws(() => parser.finish(), /结构化输出无效/);
+});
+
 test('does not stream nested answer fields or proposal content', () => {
   const parser = createStructuredAnswerStream();
 
