@@ -187,12 +187,14 @@ async function selectionDocumentPayload(projectId) {
   const project=await getProject(projectId);
   if (!project) return null;
   const document=await ensureSelectionDocument(projectId);
-  const [countries,siteRows,supplierRows,standardRows,similarRows]=await Promise.all([
+  const [countries,siteRows,supplierRows,standardRows,similarRows,standardOverviews,similarOverviews]=await Promise.all([
     db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority'),
     db.many('SELECT * FROM selection_site_assessments WHERE project_id=$1',[projectId]),
     db.many('SELECT * FROM selection_suppliers WHERE project_id=$1 ORDER BY id',[projectId]),
     listCompetitors(projectId,'standard'),
-    listCompetitors(projectId,'similar')
+    listCompetitors(projectId,'similar'),
+    reviewOverviews(projectId,'standard'),
+    reviewOverviews(projectId,'similar')
   ]);
   const siteMap=new Map(siteRows.map((row)=>[row.country_code,row]));
   const sites=countries.map((country)=>({
@@ -232,7 +234,8 @@ async function selectionDocumentPayload(projectId) {
     competitors:{
       standard:standardRows.filter(Boolean).map(decorate),
       similar:similarRows.filter(Boolean).map(decorate)
-    }
+    },
+    review_overviews:{standard:standardOverviews,similar:similarOverviews}
   };
 }
 
@@ -841,4 +844,4 @@ if (require.main===module) {
   db.ready().then(()=>server.listen(PORT,'0.0.0.0',()=>console.log(`亚马逊利润工具已启动：http://127.0.0.1:${PORT}`))).catch((error)=>{ console.error(error);process.exitCode=1; });
 }
 
-module.exports={ server,bootstrap,matchCommission,getProject };
+module.exports={ server,bootstrap,matchCommission,getProject,selectionDocumentPayload };
