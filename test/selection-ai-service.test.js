@@ -92,6 +92,45 @@ function fakeBlockingProvider() {
   };
 }
 
+function fakeOwnedIteratorProvider() {
+  let active=false;
+  let sent=false;
+  const provider={
+    order:[],interrupts:[],
+    async health() { return {ok:true}; },
+    streamTurn(input) {
+      active=true;
+      return {
+        [Symbol.asyncIterator]() { return this; },
+        async next() {
+          if (!sent) {
+            sent=true;
+            return {done:false,value:{type:'text_delta',delta:'owned'}};
+          }
+          return new Promise(()=>{});
+        },
+        async return() {
+          active=false;
+          this.closed=true;
+          provider.order.push('return');
+          return {done:true,value:undefined};
+        }
+      };
+    },
+    async interruptTurn(turnId) {
+      if (!active) {
+        this.order.push('interrupt-after-return');
+        throw Object.assign(new Error('not active'),{code:'CODEX_TURN_FAILED'});
+      }
+      this.order.push('interrupt');
+      this.interrupts.push(turnId);
+      return {status:'interrupted'};
+    },
+    dispose() { active=false; }
+  };
+  return provider;
+}
+
 function createService({codex=fakeProviderThatReplies(),openai=fakeProviderThatReplies()}={}) {
   return createSelectionAiService({
     db,
@@ -307,6 +346,22 @@ test('iterator return interrupts the Provider and persists buffered text',async(
   assert.equal((await iterator.next()).done,true);
 });
 
+test('iterator cleanup interrupts an active Provider before closing its owned iterator',async(t)=>{
+  const project=await createProject('AI owned iterator return');
+  const provider=fakeOwnedIteratorProvider();
+  const service=createService({codex:provider,openai:fakeProviderThatReplies()});
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+
+  const iterator=service.streamTurn({projectId:project.id,chapter:'overview',message:'analyse'});
+  const started=(await iterator.next()).value;
+  assert.equal((await iterator.next()).value.delta,'owned');
+  await iterator.return();
+
+  assert.deepEqual(provider.order,['interrupt','return']);
+  assert.deepEqual(provider.interrupts,[started.turnId]);
+  assert.equal((await service.getState(project.id)).messages.at(-1).status,'interrupted');
+});
+
 test('does not call a provider when the caller signal is already aborted',async(t)=>{
   const project=await createProject('AI pre-abort');
   const provider=fakeProviderThatReplies('must not run');
@@ -446,6 +501,41 @@ test('a missing site row matches an aggregate default empty text value',async(t)
   assert.equal((await db.one("SELECT opportunity_notes FROM selection_site_assessments WHERE project_id=$1 AND country_code='CA'",[project.id])).opportunity_notes,'new Canada note');
 });
 
+test('conditional site upsert detects a conflicting first insert after the missing-row check',async(t)=>{
+  const project=await createProject('AI site insert race');
+  const proposal={summary:'site',changes:[
+    {scope:'site',country_code:'CA',field:'opportunity_notes',value:'AI Canada note',reason:'evidence'}
+  ]};
+  const aggregateLoad=async(projectId)=>{
+    const payload=await loadPayload(projectId);
+    payload.sites.push({country_code:'CA',opportunity_notes:''});
+    return payload;
+  };
+  const repository=createSelectionAiRepository(db);
+  const queries=[];
+  const raceDb={transaction:async(callback)=>callback({query:async(sql,params=[])=>{
+    queries.push(sql);
+    if (/^UPDATE selection_documents/.test(sql.trim())) return {rows:[{version:1}],rowCount:1};
+    if (/^INSERT INTO selection_site_assessments/.test(sql.trim())) return {rows:[],rowCount:0};
+    return db.query(sql,params);
+  }})};
+  const service=createSelectionAiService({
+    db:raceDb,repository,providers:{codex:fakeProviderThatReplies('answer',proposal),openai:fakeProviderThatReplies()},loadPayload:aggregateLoad
+  });
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+  await collect(service.streamTurn({projectId:project.id,chapter:'sites',message:'propose'}));
+  const pending=(await service.getState(project.id)).proposals[0];
+
+  await assert.rejects(
+    service.applyProposal({projectId:project.id,proposalId:pending.id,changeIndexes:[0]}),
+    (error)=>error.code==='PROPOSAL_CONFLICT'
+  );
+  const upsert=queries.find((sql)=>/^INSERT INTO selection_site_assessments/.test(sql.trim()));
+  assert.match(upsert,/DO UPDATE SET[\s\S]+WHERE[\s\S]+RETURNING \*/);
+  assert.equal((await db.one('SELECT version FROM selection_documents WHERE project_id=$1',[project.id])).version,0);
+  assert.equal((await service.getState(project.id)).proposals[0].status,'pending');
+});
+
 test('review issue proposals require one-to-one entries and preserve every ratio',async(t)=>{
   const cases=[
     {name:'empty',current:[{issue:'a',ratio:10,solution:'x'}],proposed:[]},
@@ -512,6 +602,45 @@ test('review issue one-to-one text edits preserve all existing ratios',async(t)=
   assert.deepEqual(pending.changes[0].after.map((item)=>item.ratio),[10,20]);
   await service.applyProposal({projectId:project.id,proposalId:pending.id,changeIndexes:[0]});
   assert.deepEqual((await db.one('SELECT review_issues FROM selection_documents WHERE project_id=$1',[project.id])).review_issues.map((item)=>item.ratio),[10,20]);
+});
+
+test('oversized review issue output is dropped instead of truncating to 100 entries',async(t)=>{
+  const project=await createProject('AI oversized review normalization');
+  const current=Array.from({length:100},(_,index)=>({issue:`old-${index}`,ratio:index,solution:'old'}));
+  const proposed=Array.from({length:101},(_,index)=>({issue:`new-${index}`,ratio:999,solution:'new'}));
+  await db.query('UPDATE selection_documents SET review_issues=$1::jsonb WHERE project_id=$2',[JSON.stringify(current),project.id]);
+  const proposal={summary:'review',changes:[
+    {scope:'document',country_code:'',field:'review_issues',value:JSON.stringify(proposed),reason:'edit text'}
+  ]};
+  const service=createService({codex:fakeProviderThatReplies('answer',proposal),openai:fakeProviderThatReplies()});
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+
+  await collect(service.streamTurn({projectId:project.id,chapter:'risks',message:'propose'}));
+  assert.equal((await service.getState(project.id)).proposals.length,0);
+});
+
+test('proposal application rejects review issue lists over 100 entries',async(t)=>{
+  const project=await createProject('AI oversized review application');
+  const current=Array.from({length:100},(_,index)=>({issue:`old-${index}`,ratio:index,solution:'old'}));
+  await db.query('UPDATE selection_documents SET review_issues=$1::jsonb WHERE project_id=$2',[JSON.stringify(current),project.id]);
+  const proposal={summary:'review',changes:[
+    {scope:'document',country_code:'',field:'review_issues',value:JSON.stringify(current),reason:'edit text'}
+  ]};
+  const service=createService({codex:fakeProviderThatReplies('answer',proposal),openai:fakeProviderThatReplies()});
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+  await collect(service.streamTurn({projectId:project.id,chapter:'risks',message:'propose'}));
+  const pending=(await service.getState(project.id)).proposals[0];
+  const oversized=Array.from({length:101},(_,index)=>({issue:`tampered-${index}`,ratio:index,solution:'x'}));
+  const changes=pending.changes;
+  changes[0].after=oversized;
+  await db.query('UPDATE selection_documents SET review_issues=$1::jsonb WHERE project_id=$2',[JSON.stringify(oversized),project.id]);
+  await db.query('UPDATE selection_ai_proposals SET changes=$1::jsonb WHERE id=$2',[JSON.stringify(changes),pending.id]);
+
+  await assert.rejects(
+    service.applyProposal({projectId:project.id,proposalId:pending.id,changeIndexes:[0]}),
+    (error)=>error.code==='PROPOSAL_INVALID'
+  );
+  assert.equal((await service.getState(project.id)).proposals[0].status,'pending');
 });
 
 test('JSON proposal validation ignores object key order',async(t)=>{
