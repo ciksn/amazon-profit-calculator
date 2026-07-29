@@ -45,6 +45,8 @@ function createFakeJsonlProcess(responses=[],options={}) {
   child.wasKilled=()=>killed;
   child.emitJson=(message)=>stdout.write(`${JSON.stringify(message)}\n`);
   child.emitStdinError=(error)=>stdin.emit('error',error);
+  child.emitStdoutError=(error)=>stdout.emit('error',error);
+  child.endStdout=()=>stdout.end();
 
   if (options.error) queueMicrotask(()=>child.emit('error',options.error));
   if (options.exit) queueMicrotask(()=>child.emit('exit',options.exit.code??1,options.exit.signal??null));
@@ -268,17 +270,84 @@ test('Codex Provider respawns after the initialized app server exits',async()=>{
   provider.dispose();
 });
 
+test('Codex Provider invalidates and respawns after stdout EOF or error',async(t)=>{
+  for (const event of ['eof','error']) {
+    await t.test(event,async()=>{
+      const first=createFakeJsonlProcess([{id:1,result:{platformFamily:'windows'}}]);
+      const second=createFakeJsonlProcess([{id:2,result:{platformFamily:'windows'}}]);
+      const processes=[first,second];
+      let spawns=0;
+      const provider=createCodexProvider({spawnProcess:()=>processes[spawns++],timeoutMs:1000});
+
+      assert.deepEqual(await provider.health(),{ok:true});
+      if (event==='eof') first.endStdout();
+      else first.emitStdoutError(Object.assign(new Error('secret stdout failure'),{code:'EIO'}));
+      await new Promise((resolve)=>setImmediate(resolve));
+
+      assert.deepEqual(await provider.health(),{ok:true});
+      assert.equal(spawns,2);
+      assert.equal(first.wasKilled(),true);
+      provider.dispose();
+    });
+  }
+});
+
+test('Codex Provider consumes stdout shutdown events after deliberate dispose',async()=>{
+  const fake=createFakeJsonlProcess([{id:1,result:{platformFamily:'windows'}}]);
+  const provider=createCodexProvider({spawnProcess:()=>fake,timeoutMs:1000});
+  await provider.health();
+
+  provider.dispose();
+
+  assert.doesNotThrow(()=>fake.emitStdoutError(new Error('late disposed stdout error')));
+  fake.endStdout();
+  await new Promise((resolve)=>setImmediate(resolve));
+});
+
+test('Codex Provider ignores stale responses and exits from an old generation',async()=>{
+  const first=createFakeJsonlProcess([{id:1,result:{platformFamily:'windows'}}]);
+  const second=createFakeJsonlProcess([{id:2,result:{platformFamily:'windows'}}]);
+  const processes=[first,second];
+  let spawns=0;
+  const provider=createCodexProvider({spawnProcess:()=>processes[spawns++],timeoutMs:1000});
+
+  await provider.health();
+  first.emit('exit',1,null);
+  await new Promise((resolve)=>setImmediate(resolve));
+  await provider.health();
+  const conversation=provider.startOrResumeConversation({});
+  while (!second.sent().some((message)=>message.method==='thread/start')) {
+    await new Promise((resolve)=>setImmediate(resolve));
+  }
+  let settled=false;
+  conversation.then(()=>{ settled=true; },()=>{ settled=true; });
+
+  first.emitJson({id:3,result:{thread:{id:'stale_thread'}}});
+  first.emit('exit',1,null);
+  await new Promise((resolve)=>setImmediate(resolve));
+  assert.equal(settled,false);
+  second.emitJson({id:3,result:{thread:{id:'fresh_thread'}}});
+
+  assert.deepEqual(await conversation,{codex_thread_id:'fresh_thread'});
+  assert.deepEqual(await provider.health(),{ok:true});
+  assert.equal(spawns,2);
+  provider.dispose();
+});
+
 test('Codex Provider times out while waiting for a terminal turn notification',async()=>{
   const fake=createFakeJsonlProcess([
     {id:1,result:{platformFamily:'windows'}},
     {id:2,result:{thread:{id:'thr_1'}}},
-    {id:3,result:{turn:{id:'server_turn_1',status:'inProgress'}}}
+    {id:3,result:{turn:{id:'server_turn_1',status:'inProgress'}}},
+    {id:4,error:{code:-32000,message:'interrupt failed with secret'}}
   ]);
   const provider=createCodexProvider({spawnProcess:()=>fake,timeoutMs:10});
 
   await assert.rejects(within(collect(provider.streamTurn({
     state:{codex_thread_id:'thr_1'},system:'s',input:'i',turnId:'public_1'
   })),100),(error)=>error.code==='CODEX_TIMEOUT');
+  const interrupt=fake.sent().find((message)=>message.method==='turn/interrupt');
+  assert.deepEqual(interrupt.params,{threadId:'thr_1',turnId:'server_turn_1'});
   await assert.rejects(provider.interruptTurn('public_1'),(error)=>error.code==='CODEX_TURN_FAILED');
   provider.dispose();
 });
@@ -318,4 +387,32 @@ test('Codex Provider observes AbortSignal while conversation startup is pending'
   } finally {
     provider.dispose();
   }
+});
+
+test('Codex Provider interrupts a late server turn after aborting a pending turn/start',async()=>{
+  const fake=createFakeJsonlProcess([
+    {id:1,result:{platformFamily:'windows'}},
+    {id:2,result:{thread:{id:'thr_1'}}},
+    {id:4,error:{code:-32000,message:'late interrupt failed'}}
+  ]);
+  const provider=createCodexProvider({spawnProcess:()=>fake,timeoutMs:1000});
+  const controller=new AbortController();
+  const running=collect(provider.streamTurn({
+    state:{codex_thread_id:'thr_1'},system:'s',input:'i',turnId:'public_late',signal:controller.signal
+  }));
+  while (!fake.sent().some((message)=>message.method==='turn/start')) {
+    await new Promise((resolve)=>setImmediate(resolve));
+  }
+
+  controller.abort();
+  await assert.rejects(within(running,100),(error)=>error.code==='CODEX_TURN_INTERRUPTED');
+  fake.emitJson({id:3,result:{turn:{id:'server_turn_late',status:'inProgress'}}});
+  for (let count=0;count<10&&!fake.sent().some((message)=>message.method==='turn/interrupt');count++) {
+    await new Promise((resolve)=>setImmediate(resolve));
+  }
+
+  const interrupt=fake.sent().find((message)=>message.method==='turn/interrupt');
+  assert.deepEqual(interrupt.params,{threadId:'thr_1',turnId:'server_turn_late'});
+  await assert.rejects(provider.interruptTurn('public_late'),(error)=>error.code==='CODEX_TURN_FAILED');
+  provider.dispose();
 });
