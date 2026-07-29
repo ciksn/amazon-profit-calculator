@@ -828,12 +828,12 @@ function staticFile(req,res,url) {
   fs.readFile(file,(error,data)=>{ if (error) { res.writeHead(404);return res.end('Not found'); } res.writeHead(200,{ 'Content-Type':mime[path.extname(file)] || 'application/octet-stream' });res.end(data); });
 }
 
-function createServer({selectionAiService}={}) {
+function createServer({selectionAiService,selectionAiServiceFactory=createDefaultSelectionAiService}={}) {
   let defaultSelectionAiService=null;
   const getSelectionAiService=()=>{
     if (selectionAiService) return selectionAiService;
     if (!defaultSelectionAiService) {
-      defaultSelectionAiService=createDefaultSelectionAiService({db,loadPayload:selectionDocumentPayload});
+      defaultSelectionAiService=selectionAiServiceFactory({db,loadPayload:selectionDocumentPayload});
     }
     return defaultSelectionAiService;
   };
@@ -859,12 +859,24 @@ function createServer({selectionAiService}={}) {
   }
   });
 
-  createdServer.once('close',()=>{
+  const disposeOwnedSelectionAiService=()=>{
     if (!selectionAiService&&defaultSelectionAiService) {
       defaultSelectionAiService.dispose();
       defaultSelectionAiService=null;
     }
-  });
+  };
+  let shutdownPromise=null;
+  const shutdown=()=>{
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise=(async()=>{
+      disposeOwnedSelectionAiService();
+      if (!createdServer.listening) return;
+      await new Promise((resolve,reject)=>createdServer.close((error)=>error?reject(error):resolve()));
+    })();
+    return shutdownPromise;
+  };
+  createdServer.once('close',disposeOwnedSelectionAiService);
+  Object.defineProperty(createdServer,'shutdown',{value:shutdown});
   return createdServer;
 }
 
@@ -872,7 +884,7 @@ const server=createServer();
 
 /* node:coverage ignore next 3 */
 if (require.main===module) {
-  const shutdown=()=>{ if (server.listening) server.close(); };
+  const shutdown=()=>{ server.shutdown().catch((error)=>{ console.error(error);process.exitCode=1; }); };
   process.once('SIGINT',shutdown);
   process.once('SIGTERM',shutdown);
   db.ready().then(()=>server.listen(PORT,'0.0.0.0',()=>console.log(`亚马逊利润工具已启动：http://127.0.0.1:${PORT}`))).catch((error)=>{ console.error(error);process.exitCode=1; });

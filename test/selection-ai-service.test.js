@@ -226,6 +226,32 @@ test('health reports both Provider failures without starting a turn',async(t)=>{
   assert.equal(openai.calls,0);
 });
 
+test('every project-scoped service entry rejects an unknown project before repository or Provider work',async(t)=>{
+  const projectId=2_000_000_000;
+  const codex=fakeProviderThatReplies();
+  const openai=fakeProviderThatReplies();
+  const service=createService({codex,openai});
+  t.after(()=>service.dispose());
+
+  const calls=[
+    ()=>service.getState(projectId),
+    ()=>service.health(projectId),
+    ()=>service.setProvider(projectId,'openai'),
+    ()=>service.streamTurn({projectId,chapter:'overview',message:'missing'}).next(),
+    ()=>service.interrupt(projectId,'missing-turn'),
+    ()=>service.applyProposal({projectId,proposalId:1,changeIndexes:[0]}),
+    ()=>service.rejectProposal(projectId,1),
+    ()=>service.clear(projectId)
+  ];
+  for (const call of calls) {
+    await assert.rejects(call,(error)=>error.code==='PROJECT_NOT_FOUND');
+  }
+  assert.equal(codex.calls,0);
+  assert.equal(codex.healthCalls,0);
+  assert.equal(openai.calls,0);
+  assert.equal(openai.healthCalls,0);
+});
+
 test('rejects a concurrent turn for the same project and allows another project',async(t)=>{
   const firstProject=await createProject('AI lock A');
   const secondProject=await createProject('AI lock B');

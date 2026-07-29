@@ -3,6 +3,9 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const {createServer}=require('../server');
+const db=require('../lib/db');
+const {createSelectionAiRepository}=require('../lib/selection-ai/repository');
+const {createSelectionAiService}=require('../lib/selection-ai/service');
 
 function serviceError(code,message=code) {
   const error=new Error(message);
@@ -24,6 +27,7 @@ function createFakeService() {
     async getState(projectId) {
       calls.push(['getState',projectId]);
       if (projectId===404) throw serviceError('PROJECT_NOT_FOUND','project missing');
+      if (projectId===500) throw serviceError('23503','postgres detail: secret-row-value');
       return state;
     },
     async health(projectId) {
@@ -201,6 +205,141 @@ test('selection AI streaming failures after headers are returned as SSE errors',
     assert.equal(response.headers.get('content-type'),'text/event-stream; charset=utf-8');
     const body=await response.text();
     assert.match(body,/event: status\ndata: /);
-    assert.match(body,/event: error\ndata: \{"code":"CODEX_TURN_FAILED","error":"safe provider failure"\}/);
+    assert.match(body,/event: error\ndata: \{"code":"CODEX_TURN_FAILED","error":"Codex turn failed"\}/);
+    assert.doesNotMatch(body,/safe provider failure/);
   });
+});
+
+test('selection AI API sanitizes database, network and forged stable-code diagnostics',async()=>{
+  const service=createFakeService();
+  await withServer(service,async(base)=>{
+    const database=await requestJson(`${base}/api/projects/500/selection-ai`);
+    assert.equal(database.response.status,500);
+    assert.deepEqual(database.body,{code:'INTERNAL_ERROR',error:'Internal server error'});
+    assert.doesNotMatch(JSON.stringify(database.body),/secret-row-value|23503/);
+
+    service.streamTurn=async function* streamTurn() {
+      yield {type:'status',status:'started',turnId:'turn-network'};
+      throw serviceError('ECONNRESET','network secret: api-key-value');
+    };
+    const response=await fetch(`${base}/api/projects/7/selection-ai/turns`,{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({chapter:'overview',message:'network fail'})
+    });
+    const body=await response.text();
+    assert.match(body,/event: error\ndata: \{"code":"INTERNAL_ERROR","error":"Internal server error"\}/);
+    assert.doesNotMatch(body,/ECONNRESET|api-key-value/);
+
+    service.streamTurn=async function* streamTurn() {
+      yield {type:'status',status:'started',turnId:'turn-forged'};
+      throw serviceError('CODEX_TURN_FAILED','forged provider diagnostic');
+    };
+    const forged=await fetch(`${base}/api/projects/7/selection-ai/turns`,{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({chapter:'overview',message:'known error'})
+    });
+    const forgedBody=await forged.text();
+    assert.match(forgedBody,/"code":"CODEX_TURN_FAILED","error":"Codex turn failed"/);
+    assert.doesNotMatch(forgedBody,/forged provider diagnostic/);
+  });
+});
+
+test('selection AI interrupt rejects malformed percent encoding as validation error',async()=>{
+  const service=createFakeService();
+  await withServer(service,async(base)=>{
+    const invalid=await requestJson(`${base}/api/projects/7/selection-ai/turns/%E0/interrupt`,{method:'POST'});
+    assert.equal(invalid.response.status,400);
+    assert.deepEqual(invalid.body,{code:'VALIDATION_ERROR',error:'Invalid request'});
+    assert.equal(service.calls.some(([name])=>name==='interrupt'),false);
+  });
+});
+
+function realServiceForApi() {
+  const provider=()=>({
+    healthCalls:0,turnCalls:0,
+    async health() { this.healthCalls+=1;return {ok:true}; },
+    async *streamTurn() { this.turnCalls+=1;yield {type:'completed',result:{answer:'',proposal:null}}; },
+    async interruptTurn() { return {status:'interrupted'}; },
+    dispose() {}
+  });
+  const codex=provider();
+  const openai=provider();
+  return {
+    codex,openai,
+    service:createSelectionAiService({
+      db,
+      repository:createSelectionAiRepository(db),
+      providers:{codex,openai},
+      loadPayload:async()=>null
+    })
+  };
+}
+
+test('real repository, service and HTTP chain returns PROJECT_NOT_FOUND for every project route',async(t)=>{
+  const projectId=2_000_000_000;
+  const real=realServiceForApi();
+  const server=createServer({selectionAiService:real.service});
+  await new Promise((resolve)=>server.listen(0,'127.0.0.1',resolve));
+  const base=`http://127.0.0.1:${server.address().port}/api/projects/${projectId}/selection-ai`;
+  t.after(async()=>{
+    real.service.dispose();
+    if (server.listening) await new Promise((resolve)=>server.close(resolve));
+    await db.close();
+  });
+
+  const requests=[
+    fetch(base),
+    fetch(`${base}/health`),
+    fetch(`${base}/provider`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({provider:'openai'})}),
+    fetch(`${base}/turns`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chapter:'overview',message:'missing'})}),
+    fetch(`${base}/turns/missing-turn/interrupt`,{method:'POST'}),
+    fetch(`${base}/proposals/1/apply`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({change_indexes:[0]})}),
+    fetch(`${base}/proposals/1/reject`,{method:'POST'}),
+    fetch(`${base}/messages`,{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({confirm:true})})
+  ];
+  for (const response of await Promise.all(requests)) {
+    assert.equal(response.status,404);
+    assert.deepEqual(await response.json(),{code:'PROJECT_NOT_FOUND',error:'Project does not exist'});
+  }
+  assert.equal(real.codex.healthCalls,0);
+  assert.equal(real.codex.turnCalls,0);
+  assert.equal(real.openai.healthCalls,0);
+  assert.equal(real.openai.turnCalls,0);
+});
+
+test('owned shutdown disposes the default service before waiting for active SSE and installs no signal handlers',async(t)=>{
+  const service=createFakeService();
+  const order=[];
+  let failTurn;
+  service.streamTurn=async function* streamTurn() {
+    yield {type:'status',status:'started',turnId:'turn-shutdown'};
+    await new Promise((_,reject)=>{ failTurn=reject; });
+  };
+  service.dispose=()=>{
+    if (service.disposed) return;
+    order.push('dispose');
+    service.disposed=true;
+    failTurn(serviceError('SERVICE_DISPOSED','owned internal detail'));
+  };
+  const before={sigint:process.listenerCount('SIGINT'),sigterm:process.listenerCount('SIGTERM')};
+  const server=createServer({selectionAiServiceFactory:()=>service});
+  t.after(async()=>{
+    service.dispose();
+    if (server.listening) await new Promise((resolve)=>server.close(resolve));
+  });
+  assert.deepEqual({sigint:process.listenerCount('SIGINT'),sigterm:process.listenerCount('SIGTERM')},before);
+  server.on('close',()=>order.push('close'));
+  await new Promise((resolve)=>server.listen(0,'127.0.0.1',resolve));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const response=await fetch(`${base}/api/projects/7/selection-ai/turns`,{
+    method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({chapter:'overview',message:'wait for shutdown'})
+  });
+
+  await server.shutdown();
+  const body=await response.text();
+  assert.deepEqual(order,['dispose','close']);
+  assert.equal(server.listening,false);
+  assert.match(body,/event: error/);
+  assert.match(body,/"code":"SERVICE_DISPOSED"/);
 });
