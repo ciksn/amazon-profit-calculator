@@ -122,7 +122,7 @@
     let completedPayload=null;
     let streamError=null;
     const parser=createSseParser((type,payload)=>{
-      if (completedPayload) return;
+      if (completedPayload||streamError) return;
       if (type==='error') {
         streamError=new Error(payload.error||'生成失败');
         streamError.code=payload.code||'AI_REQUEST_FAILED';
@@ -294,7 +294,7 @@
       const syncing=state.syncingProjectId===state.projectId;
       const locked=generating||syncing||state.switchingProvider;
       elements.send.disabled=locked;
-      elements.composer.disabled=generating;
+      elements.composer.disabled=generating||syncing;
       elements.provider.disabled=locked;
       elements.stop.hidden=!generating;
       elements.stop.disabled=!generating||!state.turnId;
@@ -424,7 +424,9 @@
         if (completed) setStatus('可用','ready');
         else if (error.name==='AbortError') setStatus('已停止','');
         else showFailure(error,{operation:'generation'});
-        elements.composer.value=composerValueAfterFailure(original,{completed,generatedText:state.generatedText});
+        if (!completed) {
+          elements.composer.value=composerValueAfterFailure(original,{completed,generatedText:state.generatedText});
+        }
         await replaceWithServerState().catch(()=>{});
       } finally {
         if (state.syncingProjectId===projectId) state.syncingProjectId=null;
@@ -623,6 +625,9 @@
         else trapDrawerFocus(event);
       });
       drawerMedia?.addEventListener?.('change',()=>{
+        if (drawerMedia.matches&&elements.panel.contains(view.document.activeElement)) {
+          elements.drawerToggle.focus();
+        }
         elements.panel.classList.remove('open');
         syncPanelLayout();
       });

@@ -87,6 +87,27 @@ test('SSE 只有 completed terminal 才成功，error 与无 terminal EOF 都失
   );
 });
 
+test('SSE 首个 terminal 获胜，error 后同 chunk 的 completed 不会送达面板',async()=>{
+  const seen=[];
+  await assert.rejects(
+    ui.consumeSseResponse(streamResponse([
+      'event: error\ndata: {"code":"CODEX_TURN_FAILED","error":"failed first"}\n\n'+
+      'event: completed\ndata: {"result":{"answer":"must be ignored"}}\n\n'+
+      'event: text_delta\ndata: {"delta":"also ignored"}\n\n'
+    ]),(type)=>seen.push(type)),
+    (error)=>error.code==='CODEX_TURN_FAILED'
+  );
+  assert.deepEqual(seen,[]);
+
+  const completedSeen=[];
+  const result=await ui.consumeSseResponse(streamResponse([
+    'event: completed\ndata: {"result":{"answer":"first"}}\n\n'+
+    'event: error\ndata: {"code":"LATE_ERROR","error":"ignored"}\n\n'
+  ]),(type)=>completedSeen.push(type));
+  assert.equal(result.completed,true);
+  assert.deepEqual(completedSeen,['completed']);
+});
+
 test('显示缓存按 project 隔离，损坏缓存安全回退为空状态',()=>{
   const storage=memoryStorage();
   ui.writeProjectCache(storage,7,{messages:[{id:1,role:'user',provider:'codex',status:'completed',content:'品类 7'}],proposals:[]});
@@ -210,11 +231,13 @@ class FakeElement {
     if(selector==='[data-change-index]:checked')return (this.checkboxes||[]).filter((item)=>item.checked);
     return [];
   }
+  contains(element){return this===element||(this.focusables||[]).includes(element)}
 }
 
 function panelHarness({
   turn='complete',proposal=null,apply='conflict',narrow=true,confirmResponses=[true],
-  interrupt='success',providerError=false,resolvedStatus='',delayStateAfterTurn=false
+  interrupt='success',providerError=false,resolvedStatus='',delayStateAfterTurn=false,
+  stateErrorAfterTurn=false
 }={}){
   const document={activeElement:null,elements:{},querySelector(selector){return this.elements[selector]||null}};
   for(const id of [
@@ -294,12 +317,20 @@ function panelHarness({
           if(turn==='eof')return Promise.resolve({done:true});
           if(turn==='error'&&reads===2)return Promise.resolve({done:false,value:encoder.encode('event: error\ndata: {"code":"CODEX_TURN_FAILED","error":"failed"}\n\n')});
           if(turn==='error')return Promise.resolve({done:true});
+          if(turn==='error-completed'&&reads===2)return Promise.resolve({done:false,value:encoder.encode(
+            'event: error\ndata: {"code":"CODEX_TURN_FAILED","error":"failed first"}\n\n'+
+            'event: completed\ndata: {"result":{"answer":"must be ignored"}}\n\n'
+          )});
+          if(turn==='error-completed')return Promise.resolve({done:true});
           return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>{
             order.push('abort');const error=new Error('aborted');error.name='AbortError';reject(error);
           },{once:true}));
         }})}};
       }
       if(delayStateAfterTurn&&requests.some((item)=>item.path.endsWith('/turns')))await stateGate;
+      if(stateErrorAfterTurn&&requests.some((item)=>item.path.endsWith('/turns'))){
+        return jsonResponse({code:'STATE_LOAD_FAILED',error:'state sync failed'},{ok:false,status:500});
+      }
       return jsonResponse(statePayload());
     }
   };
@@ -331,6 +362,17 @@ test('panel 把 error 与无 completed EOF 视为失败并保留原输入',async
     assert.equal(harness.elements['#aiComposer'].value,`保留-${turn}`);
     assert.match(harness.elements['#aiErrorActions'].innerHTML,/重试/);
   }
+});
+
+test('panel 收到 error+completed 同 chunk 时失败并保留输入',async()=>{
+  const harness=panelHarness({turn:'error-completed'});
+  const panel=ui.createPanel(harness.root);
+  await panel.init({app:harness.app,apiBase:''});
+  harness.elements['#aiComposer'].value='必须保留';
+  await harness.elements['#aiSend'].emit('click');
+  assert.equal(harness.elements['#aiComposer'].value,'必须保留');
+  assert.equal(harness.elements['#aiProviderStatus'].dataset.state,'error');
+  assert.match(harness.elements['#aiErrorActions'].innerHTML,/重试/);
 });
 
 test('completed 到达即关闭 generating，随后 stop 不发 interrupt 或覆盖成功',async()=>{
@@ -387,6 +429,21 @@ test('completed 后服务端状态同步完成前继续锁定 send/provider',asy
   await sending;
   assert.equal(harness.elements['#aiSend'].disabled,false);
   assert.equal(harness.elements['#aiProvider'].disabled,false);
+});
+
+test('completed 后状态同步失败不清空同步窗口中的新草稿',async()=>{
+  const harness=panelHarness({turn:'complete',delayStateAfterTurn:true,stateErrorAfterTurn:true});
+  const panel=ui.createPanel(harness.root);
+  await panel.init({app:harness.app,apiBase:''});
+  harness.elements['#aiComposer'].value='原请求';
+  const sending=harness.elements['#aiSend'].emit('click');
+  for(let index=0;index<50&&!harness.elements['#aiStop'].hidden;index++)await Promise.resolve();
+  assert.equal(harness.elements['#aiComposer'].disabled,true);
+  harness.elements['#aiComposer'].value='同步窗口的新草稿';
+  harness.releaseState();
+  await sending;
+  assert.equal(harness.elements['#aiComposer'].value,'同步窗口的新草稿');
+  assert.equal(harness.elements['#aiComposer'].disabled,false);
 });
 
 test('轻量 DOM/fetch/SSE 集成：停止调用 interrupt 后 abort 并恢复控件',async()=>{
@@ -556,6 +613,15 @@ test('窄屏 drawer 动态 dialog、背景 inert、Tab trap；breakpoint 切换�
   assert.equal(toggle.getAttribute('aria-expanded'),'false');
   assert.equal(toggle.textContent,'AI 助手');
   assert.equal(harness.elements['.chapter-content'].inert,false);
+});
+
+test('桌面切换到窄屏并隐藏 panel 时把内部焦点归还 drawer toggle',async()=>{
+  const harness=panelHarness({narrow:false});
+  const panel=ui.createPanel(harness.root);await panel.init({app:harness.app,apiBase:''});
+  harness.elements['#aiProvider'].focus();
+  harness.media.set(true);
+  assert.equal(harness.elements['#selectionAiPanel'].inert,true);
+  assert.equal(harness.document.activeElement,harness.elements['#aiDrawerToggle']);
 });
 
 test('桌面折叠释放第三列并可恢复，窄屏仍使用 drawer toggle',async()=>{
