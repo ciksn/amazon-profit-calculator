@@ -88,3 +88,31 @@ test('repository updates messages and clear removes all persisted AI state',asyn
   assert.equal(state.proposals.length,0);
   assert.equal(state.conversation.active_provider,'codex');
 });
+
+test('repository rejects invalid message inputs without persisting them',async(t)=>{
+  const repo=createSelectionAiRepository(db);
+  const p=await project('AI validation');
+  t.after(()=>removeProjects([p]));
+  const valid={projectId:p.id,role:'user',provider:'codex',content:'message',status:'pending'};
+
+  await assert.rejects(repo.createMessage({...valid,role:'system'}),/role/);
+  await assert.rejects(repo.createMessage({...valid,provider:'gemini'}),/Provider/);
+  await assert.rejects(repo.createMessage({...valid,status:'unknown'}),/status/);
+  assert.equal((await repo.listRecentMessages(p.id)).length,0);
+});
+
+test('repository rejects invalid message status updates without persisting them',async(t)=>{
+  const repo=createSelectionAiRepository(db);
+  const p=await project('AI update validation');
+  t.after(()=>removeProjects([p]));
+  const message=await repo.createMessage({projectId:p.id,role:'assistant',provider:'openai',content:'message',status:'streaming'});
+
+  await assert.rejects(repo.updateMessage(message.id,{status:'unknown'}),/status/);
+  assert.equal((await repo.listRecentMessages(p.id))[0].status,'streaming');
+});
+
+test('repository returns null when resolving a proposal that does not exist',async()=>{
+  const repo=createSelectionAiRepository(db);
+  assert.equal(await repo.resolveProposal(-1,'applied',[]),null);
+  await db.close();
+});
