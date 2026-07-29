@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>选品文档 · MarginGo</title>
-  <link rel="stylesheet" href="./selection-document.css?v=20260728-1">
+  <link rel="stylesheet" href="./selection-document.css?v=20260729-1">
+  <link rel="stylesheet" href="./selection-ai.css?v=20260729-1">
 </head>
 <body>
   <header class="topbar">
@@ -58,11 +59,50 @@
         <div id="risksContent"></div>
       </section>
     </main>
+
+    <aside class="selection-ai-panel" id="selectionAiPanel" aria-labelledby="selectionAiTitle" aria-busy="false">
+      <header class="ai-panel-header">
+        <div><small>SELECTION COPILOT</small><h2 id="selectionAiTitle">AI 助手</h2></div>
+        <button class="ai-icon-button" id="aiDrawerClose" type="button" aria-label="关闭 AI 助手">×</button>
+      </header>
+      <div class="ai-provider-row">
+        <label for="aiProvider">Provider</label>
+        <select id="aiProvider">
+          <option value="codex">本机 Codex</option>
+          <option value="openai">OpenAI API</option>
+        </select>
+        <span id="aiProviderStatus" role="status" aria-live="polite">检查连接中…</span>
+      </div>
+      <details class="ai-history" open>
+        <summary>当前品类对话</summary>
+        <div class="ai-messages" id="aiMessages" role="log" aria-live="polite" aria-relevant="additions text"></div>
+      </details>
+      <section class="ai-proposals" id="aiProposals" aria-label="AI 修改提案" hidden></section>
+      <div class="ai-error-actions" id="aiErrorActions" role="alert" hidden></div>
+      <div class="ai-quick-prompts" id="aiQuickPrompts" aria-label="快捷问题">
+        <button type="button" data-ai-prompt="chapter">分析当前章节</button>
+        <button type="button" data-ai-prompt="summary">总结当前品类</button>
+        <button type="button" data-ai-prompt="risks">检查风险</button>
+        <button type="button" data-ai-prompt="differentiation">生成差异化建议</button>
+      </div>
+      <form class="ai-composer" id="aiComposerForm" onsubmit="return false">
+        <label class="sr-only" for="aiComposer">向 AI 助手提问</label>
+        <textarea id="aiComposer" rows="3" maxlength="10000" placeholder="询问当前品类，Ctrl / ⌘ + Enter 发送"></textarea>
+        <div>
+          <button type="button" id="aiClearHistory">清空历史</button>
+          <span></span>
+          <button type="button" id="aiStop" hidden>停止</button>
+          <button class="ai-primary" type="button" id="aiSend">发送</button>
+        </div>
+      </form>
+    </aside>
   </div>
+  <button class="ai-drawer-toggle" id="aiDrawerToggle" type="button" aria-controls="selectionAiPanel" aria-expanded="false">AI 助手</button>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="./config.js"></script>
   <script src="./profit-engine.js"></script>
   <script src="./static-api.js"></script>
-  <script src="./selection-document.js?v=20260728-1"></script>
+  <script src="./selection-document.js?v=20260729-1"></script>
+  <script src="./selection-ai.js?v=20260729-1"></script>
 </body>
 </html>

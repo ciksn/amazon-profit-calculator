@@ -37,9 +37,13 @@ test('静态构建同步选品页面资源并提供独立持久化存储',()=>{
   assert.match(build,/selection-document\.css/);
   assert.match(build,/selection-document\.js/);
   assert.match(build,/selection-document\.html/);
+  assert.match(build,/selection-ai\.css/);
+  assert.match(build,/selection-ai\.js/);
   assert.match(staticApi,/margingo-selection-documents-v1/);
   assert.match(staticApi,/selection-document/);
   assert.match(staticApi,/selection-suppliers/);
+  assert.match(staticApi,/AI_BACKEND_REQUIRED/);
+  assert.match(staticApi,/targetUrl\.origin !== location\.origin/);
   assert.match(staticApi,/validateSelectionDocument\(readBody\(options\)\)/);
   assert.match(staticApi,/validateSelectionSite\(readBody\(options\)\)/);
   assert.match(staticApi,/validateSelectionSupplier\(readBody\(options\),true\)/);

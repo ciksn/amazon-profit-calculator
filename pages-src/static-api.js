@@ -322,6 +322,9 @@
   async function route(url,options = {}) {
     const pathname = new URL(url,location.href).pathname;
     const path = pathname.slice(pathname.indexOf('/api/')); const method = String(options.method || 'GET').toUpperCase();
+    if (path.match(/^\/api\/projects\/\d+\/selection-ai(?:\/|$)/)) {
+      return json(503,{code:'AI_BACKEND_REQUIRED',error:'AI 服务不可用，需要连接本地或远程 Node 服务'});
+    }
     if (method === 'GET' && path === '/api/bootstrap') {
       return json(200,{ countries:await countries(),projects:[...local.projects].sort((a,b) => String(b.updated_at).localeCompare(String(a.updated_at))),ruleCounts:{
         fba:(await rowsFor('fba')).length,freightMissing:(await rowsFor('freight')).filter((row) => row.status === 'missing').length,commission:(await rowsFor('commission')).length } });
@@ -453,7 +456,9 @@
 
   window.fetch = async (url,options) => {
     const target = typeof url === 'string' ? url:url.url;
-    if (!new URL(target,location.href).pathname.includes('/api/')) return nativeFetch(url,options);
+    const targetUrl=new URL(target,location.href);
+    if (targetUrl.origin !== location.origin) return nativeFetch(url,options);
+    if (!targetUrl.pathname.includes('/api/')) return nativeFetch(url,options);
     try { return await route(target,options); } catch (error) { return json(500,{ error:error.message || '浏览器本地计算异常' }); }
   };
 

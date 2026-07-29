@@ -9,7 +9,8 @@ const {
 }=require('../lib/selection-document');
 const {
   createSelectionAiService,
-  createDefaultSelectionAiService
+  createDefaultSelectionAiService,
+  selectionAiProviderConfig
 }=require('../lib/selection-ai/service');
 const {createSelectionAiRepository}=require('../lib/selection-ai/repository');
 
@@ -1003,6 +1004,21 @@ test('a rejected proposal cannot later be applied',async(t)=>{
 test('default factory is lazy and disposable without starting either real provider',async()=>{
   const service=createDefaultSelectionAiService({db,loadPayload});
   service.dispose();
+});
+
+test('default Codex Provider reads the configured executable and bounded timeout',()=>{
+  assert.deepEqual(selectionAiProviderConfig({
+    CODEX_COMMAND:' C:\\tools\\codex.exe ',
+    CODEX_AI_TIMEOUT_MS:'120000'
+  }),{
+    codex:{command:'C:\\tools\\codex.exe',timeoutMs:120000}
+  });
+  assert.deepEqual(selectionAiProviderConfig({
+    CODEX_COMMAND:' ',
+    CODEX_AI_TIMEOUT_MS:'not-a-number'
+  }),{
+    codex:{command:'codex',timeoutMs:120000}
+  });
 });
 
 test.after(async()=>db.close());

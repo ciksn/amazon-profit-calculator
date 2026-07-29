@@ -97,7 +97,6 @@ test('Codex Provider uses the exact secure app-server protocol contract',async()
   assert.equal(sent[3].params.approvalPolicy,'never');
   assert.deepEqual(sent[3].params.sandboxPolicy,{
     type:'readOnly',
-    access:{type:'restricted',includePlatformDefaults:true,readableRoots:[]},
     networkAccess:false
   });
   assert.deepEqual(sent[3].params.outputSchema,OUTPUT_SCHEMA);

@@ -489,6 +489,7 @@ function activateChapter(chapter){
   if(chapter==='competitors')renderCompetitors();
   if(chapter==='suppliers')renderSuppliers();
   if(chapter==='risks')renderRisks();
+  window.dispatchEvent(new CustomEvent('selection-chapter-changed',{detail:{chapter}}));
   scrollTo({top:0,behavior:'smooth'});
 }
 
@@ -501,6 +502,11 @@ async function load(){
   renderOverview();
   updateSummary();
   setSaveState('已保存');
+  window.SelectionDocumentApp={
+    getSnapshot:()=>({projectId:state.projectId,chapter:state.chapter,data:state.data}),
+    reload:async()=>{await load();activateChapter(state.chapter)}
+  };
+  window.dispatchEvent(new CustomEvent('selection-document-ready'));
 }
 
 $$('[data-chapter]').forEach((button)=>button.addEventListener('click',()=>activateChapter(button.dataset.chapter)));

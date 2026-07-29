@@ -41,6 +41,18 @@ npm.cmd start
 
 `GET /api/health` 可用于确认服务端与本地数据库连接正常。
 
+## 选品文档 AI 助手
+
+先确认 Codex CLI 已安装、已完成登录并可从 `PATH` 运行；需要自定义命令路径或超时时间时，在 `.env` 中设置 `CODEX_COMMAND` 和 `CODEX_AI_TIMEOUT_MS`。启动服务后打开品类首页创建或选择一个品类，也可以直接访问：
+
+```text
+http://127.0.0.1:4173/selection-document.html?project=<id>
+```
+
+AI 助手默认使用本机 Codex App Server。Codex 不可用时会保留输入并显示错误，不会静默切换或调用 OpenAI。只有用户在页面中手动切换到 OpenAI Provider，后续发送才会使用 OpenAI Responses API。`OPENAI_API_KEY` 只能通过 Node 服务端环境变量注入，不得写入 HTML、前端 JavaScript、浏览器存储或 Git；静态 GitHub Pages 页面本身也不会直接连接 Codex 或保存 API Key。
+
+AI 可以读取当前品类的完整数据作为分析证据，但成本、售价、MOQ、评分、销量、销售额、利润率、ROI 及其他数字业务字段均为只读。它只能建议修改允许的文本结论、差异化方案、自查项和站点评估文本；所有修改都必须先展示预览，并由用户明确确认选中项后才会保存。
+
 ## 自动测试
 
 ```powershell
