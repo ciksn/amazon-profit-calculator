@@ -181,13 +181,49 @@ test('calls OpenAI only after an explicit provider switch',async(t)=>{
   t.after(async()=>{ service.dispose();await removeProject(project); });
 
   await service.setProvider(project.id,'openai');
-  assert.deepEqual(await service.health(project.id),{provider:'openai',ok:true});
+  assert.deepEqual(await service.health(project.id),{
+    active_provider:'openai',
+    providers:{
+      codex:{ok:true,status:'ready'},
+      openai:{ok:true,status:'ready'}
+    }
+  });
+  assert.equal(codex.healthCalls,1);
+  assert.equal(openai.healthCalls,1);
   const events=await collect(service.streamTurn({projectId:project.id,chapter:'sites',message:'analyse sites'}));
 
   assert.equal(codex.calls,0);
   assert.equal(openai.calls,1);
   assert.equal(events.at(-1).type,'completed');
   assert.equal((await service.getState(project.id)).conversation.openai_state_id,'response-1');
+});
+
+test('health reports both Provider failures without starting a turn',async(t)=>{
+  const project=await createProject('AI provider health failures');
+  const codex=fakeProviderThatReplies();
+  const openai=fakeProviderThatReplies();
+  codex.health=async()=>{ codex.healthCalls+=1;throw Object.assign(new Error('missing'),{code:'CODEX_NOT_INSTALLED'}); };
+  openai.health=async()=>{ openai.healthCalls+=1;throw Object.assign(new Error('key missing'),{code:'OPENAI_NOT_CONFIGURED'}); };
+  const service=createService({codex,openai});
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+
+  const health=await service.health(project.id);
+  assert.deepEqual({
+    active_provider:health.active_provider,
+    providers:Object.fromEntries(Object.entries(health.providers).map(([name,value])=>[
+      name,{ok:value.ok,status:value.status,code:value.code}
+    ]))
+  },{
+    active_provider:'codex',
+    providers:{
+      codex:{ok:false,status:'not_installed',code:'CODEX_NOT_INSTALLED'},
+      openai:{ok:false,status:'not_configured',code:'OPENAI_NOT_CONFIGURED'}
+    }
+  });
+  assert.equal(typeof health.providers.codex.error,'string');
+  assert.equal(typeof health.providers.openai.error,'string');
+  assert.equal(codex.calls,0);
+  assert.equal(openai.calls,0);
 });
 
 test('rejects a concurrent turn for the same project and allows another project',async(t)=>{

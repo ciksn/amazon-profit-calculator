@@ -9,6 +9,8 @@ const { calculateProfit,findSalePriceForProfitRate } = require('./lib/profit');
 const { lookupJapanTariff } = require('./lib/japan-tariff');
 const competitorAnalysis = require('./lib/competitor-analysis');
 const reviewAnalysis = require('./lib/review-analysis');
+const {handleSelectionAiRequest}=require('./lib/selection-ai/routes');
+const {createDefaultSelectionAiService}=require('./lib/selection-ai/service');
 const {
   DEFAULT_CHECKLIST,
   DOCUMENT_FIELDS,
@@ -826,22 +828,54 @@ function staticFile(req,res,url) {
   fs.readFile(file,(error,data)=>{ if (error) { res.writeHead(404);return res.end('Not found'); } res.writeHead(200,{ 'Content-Type':mime[path.extname(file)] || 'application/octet-stream' });res.end(data); });
 }
 
-const server=http.createServer(async (req,res)=>{
+function createServer({selectionAiService}={}) {
+  let defaultSelectionAiService=null;
+  const getSelectionAiService=()=>{
+    if (selectionAiService) return selectionAiService;
+    if (!defaultSelectionAiService) {
+      defaultSelectionAiService=createDefaultSelectionAiService({db,loadPayload:selectionDocumentPayload});
+    }
+    return defaultSelectionAiService;
+  };
+
+  const createdServer=http.createServer(async (req,res)=>{
   const url=new URL(req.url,`http://${req.headers.host}`);
   try {
     applyCors(req,res);if (req.method==='OPTIONS') { res.writeHead(204);return res.end(); }
-    if (url.pathname.startsWith('/api/')) return await api(req,res,url);
+    if (url.pathname.startsWith('/api/')) {
+      if (url.pathname.match(/^\/api\/projects\/\d+\/selection-ai(?:\/|$)/)) {
+        const handled=await handleSelectionAiRequest({
+          req,res,url,service:getSelectionAiService(),readBody,json
+        });
+        if (handled) return;
+      }
+      return await api(req,res,url);
+    }
     return staticFile(req,res,url);
   } catch (error) {
     const status=Number(error.statusCode)||500;
     if(status>=500)console.error(error);
     return json(res,status,{ error:error.message || '服务器异常' });
   }
-});
+  });
+
+  createdServer.once('close',()=>{
+    if (!selectionAiService&&defaultSelectionAiService) {
+      defaultSelectionAiService.dispose();
+      defaultSelectionAiService=null;
+    }
+  });
+  return createdServer;
+}
+
+const server=createServer();
 
 /* node:coverage ignore next 3 */
 if (require.main===module) {
+  const shutdown=()=>{ if (server.listening) server.close(); };
+  process.once('SIGINT',shutdown);
+  process.once('SIGTERM',shutdown);
   db.ready().then(()=>server.listen(PORT,'0.0.0.0',()=>console.log(`亚马逊利润工具已启动：http://127.0.0.1:${PORT}`))).catch((error)=>{ console.error(error);process.exitCode=1; });
 }
 
-module.exports={ server,bootstrap,matchCommission,getProject,selectionDocumentPayload };
+module.exports={ server,createServer,bootstrap,matchCommission,getProject,selectionDocumentPayload };
