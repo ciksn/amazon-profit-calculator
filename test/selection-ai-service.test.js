@@ -92,7 +92,7 @@ function fakeBlockingProvider() {
   };
 }
 
-function fakeOwnedIteratorProvider() {
+function fakeOwnedIteratorProvider(delta='owned') {
   let active=false;
   let sent=false;
   const provider={
@@ -105,7 +105,7 @@ function fakeOwnedIteratorProvider() {
         async next() {
           if (!sent) {
             sent=true;
-            return {done:false,value:{type:'text_delta',delta:'owned'}};
+            return {done:false,value:{type:'text_delta',delta}};
           }
           return new Promise(()=>{});
         },
@@ -126,6 +126,7 @@ function fakeOwnedIteratorProvider() {
       this.interrupts.push(turnId);
       return {status:'interrupted'};
     },
+    get active() { return active; },
     dispose() { active=false; }
   };
   return provider;
@@ -360,6 +361,39 @@ test('iterator cleanup interrupts an active Provider before closing its owned it
   assert.deepEqual(provider.order,['interrupt','return']);
   assert.deepEqual(provider.interrupts,[started.turnId]);
   assert.equal((await service.getState(project.id)).messages.at(-1).status,'interrupted');
+});
+
+test('delta persistence failure still closes the unfinished Provider iterator exactly once',async(t)=>{
+  const project=await createProject('AI delta persistence failure');
+  const provider=fakeOwnedIteratorProvider('x'.repeat(1024));
+  const baseRepository=createSelectionAiRepository(db);
+  let deltaFailureInjected=false;
+  let terminalWrites=0;
+  const repository={...baseRepository,async updateMessage(id,patch) {
+    if (!deltaFailureInjected&&Object.hasOwn(patch,'content')&&!Object.hasOwn(patch,'status')) {
+      deltaFailureInjected=true;
+      throw Object.assign(new Error('database secret=should-not-leak'),{code:'57P01'});
+    }
+    if (Object.hasOwn(patch,'status')) terminalWrites+=1;
+    return baseRepository.updateMessage(id,patch);
+  }};
+  const service=createSelectionAiService({
+    db,repository,providers:{codex:provider,openai:fakeProviderThatReplies()},loadPayload
+  });
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+
+  await assert.rejects(
+    collect(service.streamTurn({projectId:project.id,chapter:'overview',message:'analyse'})),
+    (error)=>error.code==='INTERNAL_ERROR'&&!error.message.includes('secret')
+  );
+  const assistant=(await service.getState(project.id)).messages.at(-1);
+  assert.equal(assistant.status,'failed');
+  assert.equal(assistant.error_code,'INTERNAL_ERROR');
+  assert.equal(terminalWrites,1);
+  assert.deepEqual(provider.order,['interrupt','return']);
+  assert.equal(provider.interrupts.length,1);
+  assert.equal(provider.active,false);
+  await service.setProvider(project.id,'openai');
 });
 
 test('does not call a provider when the caller signal is already aborted',async(t)=>{
@@ -611,6 +645,19 @@ test('oversized review issue output is dropped instead of truncating to 100 entr
   await db.query('UPDATE selection_documents SET review_issues=$1::jsonb WHERE project_id=$2',[JSON.stringify(current),project.id]);
   const proposal={summary:'review',changes:[
     {scope:'document',country_code:'',field:'review_issues',value:JSON.stringify(proposed),reason:'edit text'}
+  ]};
+  const service=createService({codex:fakeProviderThatReplies('answer',proposal),openai:fakeProviderThatReplies()});
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+
+  await collect(service.streamTurn({projectId:project.id,chapter:'risks',message:'propose'}));
+  assert.equal((await service.getState(project.id)).proposals.length,0);
+});
+
+test('review issue JSON strings over 10000 characters are dropped before parsing',async(t)=>{
+  const project=await createProject('AI oversized review JSON');
+  const value=JSON.stringify([{issue:'new',ratio:0,solution:'new'}])+' '.repeat(10001);
+  const proposal={summary:'review',changes:[
+    {scope:'document',country_code:'',field:'review_issues',value,reason:'edit text'}
   ]};
   const service=createService({codex:fakeProviderThatReplies('answer',proposal),openai:fakeProviderThatReplies()});
   t.after(async()=>{ service.dispose();await removeProject(project); });
