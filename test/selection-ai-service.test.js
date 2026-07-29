@@ -396,6 +396,100 @@ test('delta persistence failure still closes the unfinished Provider iterator ex
   await service.setProvider(project.id,'openai');
 });
 
+test('proposal creation failure persists only one failed terminal message after Provider completion',async(t)=>{
+  const project=await createProject('AI proposal persistence failure');
+  const proposal={summary:'edit',changes:[
+    {scope:'document',country_code:'',field:'positioning',value:'new position',reason:'clearer'}
+  ]};
+  let providerActive=false;
+  let providerDone=false;
+  let providerInterrupts=0;
+  const provider={
+    async health() { return {ok:true}; },
+    async *streamTurn() {
+      providerActive=true;
+      try {
+        yield {type:'text_delta',delta:'answer'};
+        yield {type:'completed',result:{answer:'answer',proposal},providerState:{}};
+      } finally {
+        providerActive=false;
+        providerDone=true;
+      }
+    },
+    async interruptTurn() { providerInterrupts+=1;return {status:'interrupted'}; },
+    dispose() { providerActive=false; }
+  };
+  const baseRepository=createSelectionAiRepository(db);
+  const terminalStatuses=[];
+  const repository={...baseRepository,
+    async updateMessage(id,patch,client) {
+      if (Object.hasOwn(patch,'status')&&patch.status!=='streaming') terminalStatuses.push(patch.status);
+      return baseRepository.updateMessage(id,patch,client);
+    },
+    async createProposal() {
+      throw Object.assign(new Error('proposal insert secret=should-not-leak'),{code:'23505'});
+    }
+  };
+  const service=createSelectionAiService({
+    db,repository,providers:{codex:provider,openai:fakeProviderThatReplies()},loadPayload
+  });
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+
+  await assert.rejects(
+    collect(service.streamTurn({projectId:project.id,chapter:'overview',message:'propose'})),
+    (error)=>error.code==='INTERNAL_ERROR'&&!error.message.includes('secret')
+  );
+
+  const state=await service.getState(project.id);
+  assert.deepEqual(terminalStatuses,['failed']);
+  assert.equal(state.messages.at(-1).status,'failed');
+  assert.equal(state.proposals.length,0);
+  assert.equal(providerDone,true);
+  assert.equal(providerActive,false);
+  assert.equal(providerInterrupts,0);
+});
+
+test('successful proposal finalization creates the proposal before one completed message in one transaction',async(t)=>{
+  const project=await createProject('AI transactional proposal completion');
+  const proposal={summary:'edit',changes:[
+    {scope:'document',country_code:'',field:'positioning',value:'new position',reason:'clearer'}
+  ]};
+  const baseRepository=createSelectionAiRepository(db);
+  const finalizationOrder=[];
+  let proposalClient;
+  let completedClient;
+  const repository={...baseRepository,
+    async createProposal(input,client) {
+      proposalClient=client;
+      finalizationOrder.push('proposal');
+      return baseRepository.createProposal(input,client);
+    },
+    async updateMessage(id,patch,client) {
+      if (patch.status==='completed') {
+        completedClient=client;
+        finalizationOrder.push('completed');
+      }
+      return baseRepository.updateMessage(id,patch,client);
+    }
+  };
+  const service=createSelectionAiService({
+    db,repository,providers:{codex:fakeProviderThatReplies('answer',proposal),openai:fakeProviderThatReplies()},loadPayload
+  });
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+
+  const events=await collect(service.streamTurn({projectId:project.id,chapter:'overview',message:'propose'}));
+  const state=await service.getState(project.id);
+
+  assert.deepEqual(finalizationOrder,['proposal','completed']);
+  assert.ok(proposalClient);
+  assert.equal(completedClient,proposalClient);
+  assert.equal(state.messages.at(-1).status,'completed');
+  assert.equal(state.proposals.length,1);
+  assert.equal(state.proposals[0].status,'pending');
+  assert.equal(events.at(-1).message.status,'completed');
+  assert.equal(events.at(-1).proposal.id,state.proposals[0].id);
+});
+
 test('does not call a provider when the caller signal is already aborted',async(t)=>{
   const project=await createProject('AI pre-abort');
   const provider=fakeProviderThatReplies('must not run');
@@ -756,8 +850,10 @@ test('resolve failure rolls back document, site, and proposal writes',async(t)=>
   let pending;
   let rolledBack=false;
   let transactionClient;
+  let trackApply=false;
   const transactionQueries=[];
   const trackingDb={transaction:async(callback)=>{
+    if (!trackApply) return db.transaction(callback);
     transactionClient={query:async(sql)=>{
       transactionQueries.push(sql);
       if (/SELECT \* FROM selection_ai_proposals/.test(sql)) return {rows:[pending],rowCount:1};
@@ -790,6 +886,7 @@ test('resolve failure rolls back document, site, and proposal writes',async(t)=>
   t.after(async()=>{ service.dispose();await removeProject(project); });
   await collect(service.streamTurn({projectId:project.id,chapter:'overview',message:'propose'}));
   pending=(await service.getState(project.id)).proposals[0];
+  trackApply=true;
 
   await assert.rejects(service.applyProposal({projectId:project.id,proposalId:pending.id,changeIndexes:[0,1]}),/injected/);
   assert.equal(rolledBack,true);

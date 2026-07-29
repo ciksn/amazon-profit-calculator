@@ -71,6 +71,33 @@ test('repository caps recent messages and resolves proposals within the supplied
   assert.deepEqual(resolved.applied_changes,[{field:'positioning',after:'new'}]);
 });
 
+test('repository creates proposals and updates messages with an optional transaction client',async(t)=>{
+  const repo=createSelectionAiRepository(db);
+  const p=await project('AI transactional finalization');
+  t.after(()=>removeProjects([p]));
+  const message=await repo.createMessage({projectId:p.id,role:'assistant',provider:'codex',content:'working',status:'streaming'});
+  const calls=[];
+
+  const result=await db.transaction(async(client)=>{
+    const trackedClient={async query(sql,params) {
+      calls.push(sql);
+      return client.query(sql,params);
+    }};
+    const proposal=await repo.createProposal({
+      projectId:p.id,messageId:message.id,baseDocumentVersion:0,
+      changes:[{scope:'document',field:'positioning',before:'old',after:'new'}]
+    },trackedClient);
+    const completed=await repo.updateMessage(message.id,{content:'complete',status:'completed'},trackedClient);
+    return {proposal,completed};
+  });
+
+  assert.equal(calls.length,2);
+  assert.match(calls[0],/^INSERT INTO selection_ai_proposals/);
+  assert.match(calls[1],/^UPDATE selection_ai_messages/);
+  assert.equal(result.proposal.status,'pending');
+  assert.equal(result.completed.status,'completed');
+});
+
 test('repository updates messages and clear removes all persisted AI state',async(t)=>{
   const repo=createSelectionAiRepository(db);
   const p=await project('AI clear');
