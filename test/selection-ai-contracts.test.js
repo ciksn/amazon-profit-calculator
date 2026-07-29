@@ -49,3 +49,14 @@ test('提案沿用站点评估的机会状态校验语义',()=>{
     {scope:'site',country_code:'US',field:'opportunity_status',value:' 优先 ',reason:'测试'}
   ]},payload),null);
 });
+
+test('提案先过滤无效项再限制为 30 个合法修改',()=>{
+  const payload={document:{version:2,positioning:'旧定位'},sites:[]};
+  const invalid=Array.from({length:30},()=>({
+    scope:'document',country_code:'',field:'decision_status',value:'通过',reason:'越权'
+  }));
+  const proposal=normalizeProposal({summary:'建议',changes:[...invalid,
+    {scope:'document',country_code:'',field:'positioning',value:'新定位',reason:'有效'}
+  ]},payload);
+  assert.deepEqual(proposal.changes.map((change)=>change.field),['positioning']);
+});
