@@ -123,6 +123,26 @@ test('OpenAI Provider aborts an active turn and reports interrupted status',asyn
   provider.dispose();
 });
 
+test('OpenAI Provider links an optional caller AbortSignal without losing public turn cleanup',async()=>{
+  const client=createFakeClient({waitForAbort:true});
+  const provider=createOpenAiProvider({client});
+  const controller=new AbortController();
+  const running=collect(provider.streamTurn({state:{},system:'s',input:'i',turnId:'external_1',signal:controller.signal}));
+  while (!client.requests.length) await new Promise((resolve)=>setImmediate(resolve));
+
+  try {
+    const interrupted=assert.rejects(running,(error)=>error.code==='OPENAI_INTERRUPTED');
+    controller.abort();
+    await new Promise((resolve)=>setImmediate(resolve));
+    assert.equal(client.options[0].signal.aborted,true);
+    await interrupted;
+    await assert.rejects(provider.interruptTurn('external_1'),(error)=>error.code==='OPENAI_TURN_NOT_FOUND');
+  } finally {
+    provider.dispose();
+    await running.catch(()=>{});
+  }
+});
+
 test('OpenAI Provider never trusts an upstream OPENAI_* error code or diagnostic',async()=>{
   const upstream=Object.assign(new Error('Bearer sk-secret failed'),{
     code:'OPENAI_LEAK',
