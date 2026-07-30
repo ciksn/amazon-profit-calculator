@@ -44,7 +44,7 @@ let embedHtml = fs.readFileSync(path.join(root,'public','embed.html'),'utf8');
 embedHtml = embedHtml.replace('<script src="./config.js"></script>','<script src="./embed-config.js"></script>');
 fs.writeFileSync(path.join(docs,'embed.html'),embedHtml);
 let siteCardHtml = fs.readFileSync(path.join(root,'public','site-card.html'),'utf8');
-siteCardHtml = siteCardHtml.replace('<script src="./config.js"></script>','<script src="./config.js"></script>\n  <script src="./profit-engine.js"></script>\n  <script src="./static-api.js"></script>');
+siteCardHtml = siteCardHtml.replace('<script src="./config.js"></script>','<script src="./embed-config.js"></script>');
 fs.writeFileSync(path.join(docs,'site-card.html'),siteCardHtml);
 let selectionDocumentHtml = fs.readFileSync(path.join(root,'public','selection-document.html'),'utf8');
 selectionDocumentHtml = selectionDocumentHtml.replace('<script src="./config.js"></script>','<script src="./config.js"></script>\n  <script src="./profit-engine.js"></script>\n  <script src="./static-api.js"></script>');

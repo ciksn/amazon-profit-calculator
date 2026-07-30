@@ -36,6 +36,16 @@ test('Pages build generates a live-backed embed without the static API adapter',
   assert.ok(fs.statSync(path.join(root,'docs','exceljs.min.js')).size>100_000);
 });
 
+test('Pages build connects the single-site card to the live backend',()=>{
+  const result=build('https://www.200392.xyz');
+  assert.equal(result.status,0,result.stderr || result.stdout);
+
+  const html=fs.readFileSync(path.join(root,'docs','site-card.html'),'utf8');
+  assert.match(html,/<script src="\.\/embed-config\.js"><\/script>/);
+  assert.doesNotMatch(html,/static-api\.js/);
+  assert.doesNotMatch(html,/profit-engine\.js/);
+});
+
 test('Pages build rejects a missing or unsafe live API origin',()=>{
   for (const value of [undefined,'http://www.200392.xyz','https://www.200392.xyz/api']) {
     const result=build(value);
