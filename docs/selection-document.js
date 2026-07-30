@@ -1,74 +1,102 @@
 'use strict';
 
 (function selectionDocumentModule(root){
-function createDocumentSaveQueue({
+function cloneValue(value) {
+  return value===undefined?undefined:JSON.parse(JSON.stringify(value));
+}
+
+function valuesMatch(left,right) {
+  return JSON.stringify(left)===JSON.stringify(right);
+}
+
+function snapshotFields(entity,fields) {
+  return Object.fromEntries(fields.map((fieldName)=>[
+    fieldName,
+    cloneValue(entity?.[fieldName])
+  ]));
+}
+
+function createLatestSnapshotSaveQueue({
   delayMs=500,
-  readDocument,
-  writeDocument,
-  snapshotDocument,
+  snapshot,
   request,
+  applyResponse=()=>{},
   onSaved=()=>{},
   onError=()=>{},
   setTimer=setTimeout,
   clearTimer=clearTimeout
 }={}) {
   let pending=null;
-  let running=false;
+  let runningPromise=null;
   let timer=null;
   let idleWaiters=[];
+  let closed=false;
 
-  const isIdle=()=>!running&&!pending&&!timer;
+  const isIdle=()=>!runningPromise&&!pending&&!timer;
+  const isClosed=()=>closed;
   const settleIdle=()=>{
     if(!isIdle())return;
     const waiters=idleWaiters;
     idleWaiters=[];
-    for(const resolve of waiters)resolve();
+    for(const waiter of waiters)waiter.resolve();
+  };
+  const rejectIdle=(error)=>{
+    const waiters=idleWaiters;
+    idleWaiters=[];
+    for(const waiter of waiters)waiter.reject(error);
   };
   const whenIdle=()=>isIdle()
     ? Promise.resolve()
-    : new Promise((resolve)=>idleWaiters.push(resolve));
+    : new Promise((resolve,reject)=>idleWaiters.push({resolve,reject}));
 
-  async function run() {
-    if(running||!pending)return whenIdle();
+  function run() {
+    if(runningPromise)return runningPromise;
+    if(!pending)return Promise.resolve();
     if(timer){
       clearTimer(timer);
       timer=null;
     }
-    running=true;
-    const snapshot=pending;
-    pending=null;
-    try{
-      const current=readDocument();
-      const saved=await request({...snapshot,version:Number(current?.version)||0});
-      const hasPending=Boolean(pending);
-      if(hasPending){
-        const live=readDocument();
-        live.version=saved.version;
-        if(Object.hasOwn(saved,'updated_at'))live.updated_at=saved.updated_at;
-      }else{
-        writeDocument(saved);
+
+    runningPromise=(async()=>{
+      while(pending&&!closed){
+        const sent=pending;
+        pending=null;
+        try{
+          const saved=await request(sent);
+          const hasPending=Boolean(pending);
+          if(!closed){
+            applyResponse(saved,sent,{hasPending});
+            onSaved(saved,{hasPending,sent});
+          }
+        }catch(error){
+          if(!closed){
+            if(!pending)pending=sent;
+            onError(error);
+          }
+          throw error;
+        }
       }
-      onSaved(saved,{hasPending});
-      running=false;
-      if(pending)return run();
+    })();
+    runningPromise.then(()=>{
+      runningPromise=null;
       settleIdle();
-      return saved;
-    }catch(error){
-      if(!pending)pending=snapshot;
-      running=false;
-      onError(error);
-      throw error;
-    }
+    },(error)=>{
+      runningPromise=null;
+      rejectIdle(error);
+    });
+    return runningPromise;
   }
 
   function enqueue() {
-    pending=snapshotDocument();
-    if(running)return;
+    if(closed)return false;
+    pending=snapshot();
+    if(runningPromise)return true;
     if(timer)clearTimer(timer);
     timer=setTimer(()=>{
       timer=null;
       run().catch(()=>{});
     },delayMs);
+    return true;
   }
 
   function flush() {
@@ -76,11 +104,155 @@ function createDocumentSaveQueue({
       clearTimer(timer);
       timer=null;
     }
-    if(running)return whenIdle();
-    return pending?run():Promise.resolve();
+    if(runningPromise)return whenIdle();
+    return pending&&!closed?run():Promise.resolve();
   }
 
-  return {enqueue,flush,whenIdle};
+  function close() {
+    closed=true;
+    pending=null;
+    if(timer){
+      clearTimer(timer);
+      timer=null;
+    }
+    settleIdle();
+    return whenIdle();
+  }
+
+  return {enqueue,flush,whenIdle,isIdle,isClosed,close};
+}
+
+function createDocumentSaveQueue({
+  readDocument,
+  writeDocument,
+  snapshotDocument,
+  request,
+  ...options
+}={}) {
+  return createLatestSnapshotSaveQueue({
+    ...options,
+    snapshot:snapshotDocument,
+    request:(snapshot)=>request({
+      ...snapshot,
+      version:Number(readDocument()?.version)||0
+    }),
+    applyResponse:(saved,_sent,{hasPending})=>{
+      if(hasPending){
+        const live=readDocument();
+        live.version=saved.version;
+        if(Object.hasOwn(saved,'updated_at'))live.updated_at=saved.updated_at;
+      }else{
+        writeDocument(saved);
+      }
+    }
+  });
+}
+
+function createEntitySaveQueue({
+  readEntity,
+  fields,
+  metadataFields=[],
+  dependentFields=[],
+  request,
+  ...options
+}={}) {
+  return createLatestSnapshotSaveQueue({
+    ...options,
+    snapshot:()=>snapshotFields(readEntity(),fields),
+    request,
+    applyResponse:(saved,sent)=>{
+      const live=readEntity();
+      if(!live)return;
+      const allEditableFieldsUnchanged=fields.every((fieldName)=>
+        valuesMatch(live[fieldName],sent[fieldName])
+      );
+      for(const fieldName of fields){
+        if(
+          Object.hasOwn(saved,fieldName)&&
+          valuesMatch(live[fieldName],sent[fieldName])
+        )live[fieldName]=cloneValue(saved[fieldName]);
+      }
+      for(const fieldName of metadataFields){
+        if(Object.hasOwn(saved,fieldName))live[fieldName]=cloneValue(saved[fieldName]);
+      }
+      if(allEditableFieldsUnchanged){
+        for(const fieldName of dependentFields){
+          if(Object.hasOwn(saved,fieldName))live[fieldName]=cloneValue(saved[fieldName]);
+        }
+      }
+    }
+  });
+}
+
+function createAsyncOperationRegistry({onTrack=()=>{}}={}) {
+  const operations=new Set();
+  return {
+    track(operation){
+      const tracked=Promise.resolve(operation);
+      operations.add(tracked);
+      onTrack(tracked);
+      tracked.then(
+        ()=>operations.delete(tracked),
+        ()=>operations.delete(tracked)
+      );
+      return tracked;
+    },
+    snapshot:()=>[...operations],
+    isIdle:()=>operations.size===0
+  };
+}
+
+async function loadDataAfterStableSaves({
+  fetchData,
+  flush,
+  readRevision=()=>0,
+  hasWork=()=>false,
+  maxRefetches=2
+}={}) {
+  const refetchLimit=Math.max(0,Math.floor(Number(maxRefetches)||0));
+  for(let attempt=0;attempt<=refetchLimit;attempt+=1){
+    await flush();
+    const revisionBeforeFetch=readRevision();
+    const loaded=await fetchData();
+    if(readRevision()===revisionBeforeFetch&&!hasWork())return loaded;
+    if(attempt===refetchLimit){
+      const error=new Error('刷新期间仍有新的保存操作，请稍后重试');
+      error.code='RELOAD_SAVE_ACTIVITY';
+      throw error;
+    }
+  }
+}
+
+function createExclusiveActionLock({setLocked=()=>{}}={}) {
+  let lockDepth=0;
+  return {
+    async run(operation){
+      if(lockDepth===0)setLocked(true);
+      lockDepth+=1;
+      try{
+        return await operation();
+      }finally{
+        lockDepth-=1;
+        if(lockDepth===0)setLocked(false);
+      }
+    },
+    depth:()=>lockDepth,
+    isLocked:()=>lockDepth>0
+  };
+}
+
+async function deleteEntityAfterSave({
+  queue,
+  requestDelete,
+  unregister=()=>{},
+  onDeleted=()=>{}
+}={}) {
+  if(queue)await queue.flush();
+  const result=await requestDelete();
+  if(queue)await queue.close();
+  unregister();
+  onDeleted(result);
+  return result;
 }
 
 const state={
@@ -89,15 +261,39 @@ const state={
   chapter:'overview',
   siteCode:'US',
   competitorKind:'standard',
-  saveTimers:new Map(),
+  siteSaveQueues:new Map(),
+  supplierSaveQueues:new Map(),
+  lifecycleOperations:null,
+  workRevision:0,
   lastRetry:null
 };
+state.lifecycleOperations=createAsyncOperationRegistry({
+  onTrack:()=>{state.workRevision+=1}
+});
 const $=(selector,target=root.document)=>target.querySelector(selector);
 const $$=(selector,target=root.document)=>[...target.querySelectorAll(selector)];
 const escapeHtml=(value)=>String(value??'').replace(/[&<>"']/g,(char)=>({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
 })[char]);
 const apiBase=String(root.MARGINGO_API_BASE||'').replace(/\/$/,'');
+
+function setWorkbenchEditingLocked(locked){
+  for(const selector of ['.chapter-nav','.chapter-content']){
+    const element=$(selector);
+    if(!element)continue;
+    element.inert=locked;
+    if(locked)element.setAttribute('aria-busy','true');
+    else element.removeAttribute('aria-busy');
+  }
+}
+
+const exclusiveReloadLock=createExclusiveActionLock({
+  setLocked:setWorkbenchEditingLocked
+});
+
+function withExclusiveReload(operation){
+  return exclusiveReloadLock.run(operation);
+}
 
 async function api(path,options={}) {
   const response=await fetch(`${apiBase}${path}`,{
@@ -128,26 +324,6 @@ function setSaveState(text,isError=false,retry=null){
   const button=$('#retrySave');
   state.lastRetry=retry;
   button.hidden=!retry;
-}
-
-function scheduleSave(key,callback){
-  setSaveState('保存中…');
-  clearTimeout(state.saveTimers.get(key));
-  state.saveTimers.set(key,setTimeout(async()=>{
-    try{
-      await callback();
-      setSaveState('已保存');
-    }catch(error){
-      if(error.status===409){
-        setSaveState('数据已被他人更新，请刷新后再编辑',true);
-      }else{
-        setSaveState('保存失败',true,callback);
-      }
-      toast(error.message);
-    }finally{
-      state.saveTimers.delete(key);
-    }
-  },500));
 }
 
 function number(value,digits=2){
@@ -246,6 +422,17 @@ const DOCUMENT_FIELDS=[
   'differentiation_items','review_issues','overview_summary','competitor_summary',
   'supplier_summary','patent_notes','checklist'
 ];
+const SITE_FIELDS=[
+  'market_average_revenue','market_average_sales','new_product_friendliness',
+  'same_product_performance','opportunity_status','opportunity_notes',
+  'certification_required','certification_actual','supplier_certifications',
+  'certification_gap','certification_gap_cost','payback_period'
+];
+const SUPPLIER_FIELDS=[
+  'name','product_url','image_url','cost_cny','moq','specifications','certifications',
+  'sample_reason','pre_sample_score','post_sample_score','pros','cons',
+  'target_country_code','target_sale_price'
+];
 
 function documentSnapshot(){
   const doc=state.data.document;
@@ -278,7 +465,117 @@ const documentSaveQueue=createDocumentSaveQueue({
 
 function scheduleDocumentSave(){
   setSaveState('保存中…');
+  state.workRevision+=1;
   documentSaveQueue.enqueue();
+}
+
+function handleEntitySaveError(error,queue){
+  if(error.status===409){
+    setSaveState('数据已被他人更新，请刷新后再编辑',true);
+  }else{
+    setSaveState('保存失败',true,()=>queue.flush());
+  }
+  toast(error.message);
+}
+
+function getSiteSaveQueue(countryCode){
+  if(state.siteSaveQueues.has(countryCode))return state.siteSaveQueues.get(countryCode);
+  let queue;
+  queue=createEntitySaveQueue({
+    readEntity:()=>state.data?.sites.find((item)=>item.country_code===countryCode),
+    fields:SITE_FIELDS,
+    metadataFields:['updated_at'],
+    request:(payload)=>api(`/api/projects/${state.projectId}/selection-document/sites/${countryCode}`,{
+      method:'PUT',body:JSON.stringify(payload)
+    }),
+    onSaved:(_saved,{hasPending})=>{
+      updateSummary();
+      if(!hasPending)setSaveState('已保存');
+    },
+    onError:(error)=>handleEntitySaveError(error,queue)
+  });
+  state.siteSaveQueues.set(countryCode,queue);
+  return queue;
+}
+
+function scheduleSiteSave(site){
+  setSaveState('保存中…');
+  state.workRevision+=1;
+  getSiteSaveQueue(site.country_code).enqueue();
+}
+
+function getSupplierSaveQueue(supplierId){
+  if(state.supplierSaveQueues.has(supplierId))return state.supplierSaveQueues.get(supplierId);
+  let queue;
+  queue=createEntitySaveQueue({
+    readEntity:()=>state.data?.suppliers.find((item)=>item.id===supplierId),
+    fields:SUPPLIER_FIELDS,
+    metadataFields:['updated_at'],
+    dependentFields:['calculation'],
+    request:(payload)=>api(`/api/selection-suppliers/${supplierId}`,{
+      method:'PUT',body:JSON.stringify(payload)
+    }),
+    onSaved:(_saved,{hasPending})=>{
+      updateSummary();
+      if(!hasPending)setSaveState('已保存');
+    },
+    onError:(error)=>handleEntitySaveError(error,queue)
+  });
+  state.supplierSaveQueues.set(supplierId,queue);
+  return queue;
+}
+
+function scheduleSupplierSave(supplier){
+  setSaveState('保存中…');
+  state.workRevision+=1;
+  getSupplierSaveQueue(supplier.id).enqueue();
+}
+
+function allSaveQueues(){
+  return [
+    documentSaveQueue,
+    ...state.siteSaveQueues.values(),
+    ...state.supplierSaveQueues.values()
+  ];
+}
+
+async function flushSaveQueues(readQueues,readOperations=()=>[]){
+  while(true){
+    const queues=[...new Set(readQueues())];
+    const operations=[...new Set(readOperations())];
+    const results=await Promise.allSettled([
+      ...queues.map((queue)=>queue.flush()),
+      ...operations
+    ]);
+    const failure=results.find((result)=>result.status==='rejected');
+    if(failure)throw failure.reason;
+    if(
+      [...new Set(readQueues())].every((queue)=>queue.isIdle())&&
+      readOperations().length===0
+    )return;
+  }
+}
+
+function flushPendingSaves(){
+  return flushSaveQueues(
+    allSaveQueues,
+    state.lifecycleOperations.snapshot
+  );
+}
+
+function hasActiveSaveWork(){
+  return (
+    !state.lifecycleOperations.isIdle()||
+    allSaveQueues().some((queue)=>!queue.isIdle())
+  );
+}
+
+function closeAndRemoveIdleQueues(queueMap){
+  for(const [key,queue] of queueMap){
+    if(!queue.isIdle())continue;
+    void queue.close();
+    queueMap.delete(key);
+  }
 }
 
 function bindDocumentFields(root){
@@ -359,22 +656,8 @@ function bindSiteControls(root){
     const site=state.data.sites.find((item)=>item.country_code===state.siteCode);
     site[input.name]=input.type==='number'?Number(input.value)||0:input.value;
     updateSummary();
-    scheduleSave(`site:${state.siteCode}`,()=>saveSite(site));
+    scheduleSiteSave(site);
   }));
-}
-
-async function saveSite(site){
-  const payload={};
-  for(const key of [
-    'market_average_revenue','market_average_sales','new_product_friendliness',
-    'same_product_performance','opportunity_status','opportunity_notes',
-    'certification_required','certification_actual','supplier_certifications',
-    'certification_gap','certification_gap_cost','payback_period'
-  ])payload[key]=site[key];
-  const saved=await api(`/api/projects/${state.projectId}/selection-document/sites/${site.country_code}`,{
-    method:'PUT',body:JSON.stringify(payload)
-  });
-  Object.assign(site,saved);
 }
 
 function renderCompetitors(){
@@ -496,8 +779,7 @@ async function createSupplier(event){
   event.preventDefault();
   const form=event.currentTarget;
   const body=Object.fromEntries(new FormData(form));
-  try{
-    setSaveState('保存中…');
+  const operation=(async()=>{
     const supplier=await api(`/api/projects/${state.projectId}/selection-document/suppliers`,{
       method:'POST',body:JSON.stringify(body)
     });
@@ -506,6 +788,11 @@ async function createSupplier(event){
     updateSummary();
     setSaveState('已保存');
     toast('供应商已添加');
+    return supplier;
+  })();
+  try{
+    setSaveState('保存中…');
+    await state.lifecycleOperations.track(operation);
   }catch(error){setSaveState('保存失败',true,()=>createSupplier(event));toast(error.message)}
 }
 
@@ -514,30 +801,27 @@ function bindSupplierForm(form){
     const supplier=state.data.suppliers.find((item)=>item.id===Number(form.dataset.supplierForm));
     supplier[event.target.name]=event.target.type==='number'?(event.target.value===''?null:Number(event.target.value)):event.target.value;
     updateSummary();
-    scheduleSave(`supplier:${supplier.id}`,()=>saveSupplier(supplier));
+    scheduleSupplierSave(supplier);
   });
   $('[data-delete-supplier]',form).addEventListener('click',async(event)=>{
     if(!confirm('删除这个供应商候选？'))return;
     const id=Number(event.currentTarget.dataset.deleteSupplier);
+    const queue=state.supplierSaveQueues.get(id);
+    const operation=deleteEntityAfterSave({
+      queue,
+      requestDelete:()=>api(`/api/selection-suppliers/${id}`,{method:'DELETE'}),
+      unregister:()=>{
+        if(state.supplierSaveQueues.get(id)===queue)state.supplierSaveQueues.delete(id);
+      },
+      onDeleted:()=>{
+        state.data.suppliers=state.data.suppliers.filter((item)=>item.id!==id);
+        renderSuppliers();updateSummary();toast('供应商已删除');
+      }
+    });
     try{
-      await api(`/api/selection-suppliers/${id}`,{method:'DELETE'});
-      state.data.suppliers=state.data.suppliers.filter((item)=>item.id!==id);
-      renderSuppliers();updateSummary();toast('供应商已删除');
+      await state.lifecycleOperations.track(operation);
     }catch(error){toast(error.message)}
   });
-}
-
-async function saveSupplier(supplier){
-  const payload={};
-  for(const key of [
-    'name','product_url','image_url','cost_cny','moq','specifications','certifications',
-    'sample_reason','pre_sample_score','post_sample_score','pros','cons',
-    'target_country_code','target_sale_price'
-  ])payload[key]=supplier[key];
-  const saved=await api(`/api/selection-suppliers/${supplier.id}`,{method:'PUT',body:JSON.stringify(payload)});
-  const index=state.data.suppliers.findIndex((item)=>item.id===supplier.id);
-  state.data.suppliers[index]=saved;
-  renderSuppliers();updateSummary();
 }
 
 function renderRisks(){
@@ -569,7 +853,7 @@ function renderRisks(){
   $$('[data-site]',$('#risksContent')).forEach((button)=>button.addEventListener('click',()=>{state.siteCode=button.dataset.site;renderRisks()}));
   $$('[name]',$('[data-risk-form]')).forEach((input)=>input.addEventListener('input',()=>{
     site[input.name]=input.type==='number'?Number(input.value)||0:input.value;
-    scheduleSave(`site:${site.country_code}`,()=>saveSite(site));
+    scheduleSiteSave(site);
   }));
   bindDocumentFields($('#risksContent'));
   $$('[data-check]',$('#risksContent')).forEach((input)=>input.addEventListener('change',()=>{
@@ -604,7 +888,16 @@ function activateChapter(chapter){
 
 async function load(){
   if(!Number.isInteger(state.projectId)||state.projectId<=0)throw new Error('链接中缺少有效的品类 ID');
-  state.data=await api(`/api/projects/${state.projectId}/selection-document`);
+  const nextData=await loadDataAfterStableSaves({
+    flush:flushPendingSaves,
+    fetchData:()=>api(`/api/projects/${state.projectId}/selection-document`),
+    readRevision:()=>state.workRevision,
+    hasWork:hasActiveSaveWork,
+    maxRefetches:2
+  });
+  state.data=nextData;
+  closeAndRemoveIdleQueues(state.siteSaveQueues);
+  closeAndRemoveIdleQueues(state.supplierSaveQueues);
   state.siteCode=state.data.sites.find((item)=>item.country_code==='US')?.country_code||state.data.sites[0]?.country_code;
   $('#projectTitle').textContent=state.data.project.name||'未命名品类';
   document.title=`${state.data.project.name} · 选品文档`;
@@ -613,7 +906,13 @@ async function load(){
   setSaveState('已保存');
   window.SelectionDocumentApp={
     getSnapshot:()=>({projectId:state.projectId,chapter:state.chapter,data:state.data}),
-    reload:async()=>{await load();activateChapter(state.chapter)}
+    flushPendingSaves,
+    withExclusiveReload,
+    reload:()=>withExclusiveReload(async()=>{
+      await flushPendingSaves();
+      await load();
+      activateChapter(state.chapter);
+    })
   };
   window.dispatchEvent(new CustomEvent('selection-document-ready'));
 }
@@ -630,6 +929,15 @@ function bootSelectionDocument(){
   });
 }
 
-if(typeof module!=='undefined'&&module.exports)module.exports={createDocumentSaveQueue};
+if(typeof module!=='undefined'&&module.exports)module.exports={
+  createDocumentSaveQueue,
+  createEntitySaveQueue,
+  createLatestSnapshotSaveQueue,
+  createAsyncOperationRegistry,
+  createExclusiveActionLock,
+  deleteEntityAfterSave,
+  loadDataAfterStableSaves,
+  flushSaveQueues
+};
 if(root?.document)bootSelectionDocument();
 })(typeof window!=='undefined'?window:globalThis);
