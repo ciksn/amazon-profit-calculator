@@ -232,6 +232,13 @@
       }
     }
 
+    async function withExclusiveWorkbench(operation) {
+      if(typeof state.app?.withExclusiveReload==='function'){
+        return state.app.withExclusiveReload(operation);
+      }
+      return operation();
+    }
+
     function cacheDisplay() {
       writeProjectCache(view.localStorage,state.projectId,{messages:state.messages,proposals:state.proposals});
     }
@@ -503,13 +510,15 @@
       if (!change_indexes.length) { view.alert('请至少选择一项修改');return; }
       if (!view.confirm(`确认应用选中的 ${change_indexes.length} 项文本修改？`)) return;
       try {
-        await flushWorkbenchSaves();
-        await request(`/proposals/${proposalId}/apply`,{
-          method:'POST',body:JSON.stringify({change_indexes})
+        await withExclusiveWorkbench(async()=>{
+          await flushWorkbenchSaves();
+          await request(`/proposals/${proposalId}/apply`,{
+            method:'POST',body:JSON.stringify({change_indexes})
+          });
+          await flushWorkbenchSaves();
+          await state.app.reload();
+          await replaceWithServerState();
         });
-        await flushWorkbenchSaves();
-        await state.app.reload();
-        await replaceWithServerState();
       } catch (error) {
         if (error.code==='PROPOSAL_CONFLICT') {
           const proposal=state.proposals.find((item)=>Number(item.id)===proposalId);
@@ -525,22 +534,26 @@
       const proposalId=Number(card.dataset.proposalId);
       if (!view.confirm('确认拒绝整份修改提案？')) return;
       try {
-        await flushWorkbenchSaves();
-        await request(`/proposals/${proposalId}/reject`,{method:'POST'});
-        await replaceWithServerState();
+        await withExclusiveWorkbench(async()=>{
+          await flushWorkbenchSaves();
+          await request(`/proposals/${proposalId}/reject`,{method:'POST'});
+          await replaceWithServerState();
+        });
       } catch (error) { showFailure(error,{operation:'proposal'}); }
     }
 
     async function refreshConflictedProposal(card) {
       const proposalId=Number(card.dataset.proposalId);
       try {
-        await flushWorkbenchSaves();
-        await state.app.reload();
-        await replaceWithServerState();
-        const proposal=state.proposals.find((item)=>Number(item.id)===proposalId);
-        if (proposal?.status==='pending') proposal.conflicted=true;
-        cacheDisplay();
-        renderProposals();
+        await withExclusiveWorkbench(async()=>{
+          await flushWorkbenchSaves();
+          await state.app.reload();
+          await replaceWithServerState();
+          const proposal=state.proposals.find((item)=>Number(item.id)===proposalId);
+          if (proposal?.status==='pending') proposal.conflicted=true;
+          cacheDisplay();
+          renderProposals();
+        });
       } catch (error) { showFailure(error,{operation:'proposal'}); }
     }
 

@@ -55,12 +55,19 @@ async function waitFor(predicate,message) {
   assert.fail(message);
 }
 
-test('workbench bridge publishes flushPendingSaves before the ready event',()=>{
+test('workbench bridge publishes save and exclusive lifecycle methods before the ready event',()=>{
   const bridgeIndex=source.indexOf('flushPendingSaves,');
+  const exclusiveIndex=source.indexOf('withExclusiveReload,');
   const readyIndex=source.indexOf("dispatchEvent(new CustomEvent('selection-document-ready'))");
   assert.notEqual(bridgeIndex,-1);
+  assert.notEqual(exclusiveIndex,-1);
   assert.notEqual(readyIndex,-1);
   assert.ok(bridgeIndex<readyIndex);
+  assert.ok(exclusiveIndex<readyIndex);
+  assert.equal(
+    (source.match(/state\.lifecycleOperations\.track\(operation\)/g)||[]).length,
+    2
+  );
 });
 
 test('document autosave queues the latest edit and sends it with the saved server version',async()=>{
@@ -344,4 +351,206 @@ test('flush rejects when a pending entity save fails and leaves it retryable',as
   assert.equal(queue.isIdle(),false);
   await assert.rejects(queue.flush(),/save failed/);
   assert.equal(attempts,2);
+});
+
+test('global flush waits for supplier create and delete lifecycle operations',async()=>{
+  const {
+    createAsyncOperationRegistry,
+    flushSaveQueues
+  }=loadSelectionDocumentModule();
+  assert.equal(typeof createAsyncOperationRegistry,'function');
+  const registry=createAsyncOperationRegistry();
+
+  for(const operationName of ['create','delete']){
+    const gate=deferred();
+    registry.track(gate.promise);
+    let settled=false;
+    const flushing=flushSaveQueues(
+      ()=>[],
+      ()=>registry.snapshot()
+    ).then(()=>{settled=true});
+
+    await Promise.resolve();
+    assert.equal(settled,false,`${operationName} was not included in flush`);
+    gate.resolve();
+    await flushing;
+    assert.equal(settled,true);
+    assert.equal(registry.isIdle(),true);
+  }
+});
+
+test('supplier delete drains the latest save, then closes and unregisters the queue',async()=>{
+  const {
+    createEntitySaveQueue,
+    deleteEntityAfterSave
+  }=loadSelectionDocumentModule();
+  assert.equal(typeof deleteEntityAfterSave,'function');
+
+  const supplier={id:42,name:'latest local supplier'};
+  const saveGate=deferred();
+  const deleteGate=deferred();
+  const events=[];
+  let saveRequests=0;
+  let unregistered=false;
+  const queue=createEntitySaveQueue({
+    delayMs:60_000,
+    readEntity:()=>supplier,
+    fields:['name'],
+    request:async(payload)=>{
+      saveRequests+=1;
+      events.push(`PUT:${payload.name}`);
+      return saveGate.promise;
+    }
+  });
+  queue.enqueue();
+
+  const deleting=deleteEntityAfterSave({
+    queue,
+    requestDelete:async()=>{
+      events.push('DELETE');
+      return deleteGate.promise;
+    },
+    unregister:()=>{unregistered=true}
+  });
+  await waitFor(()=>saveRequests===1,'supplier save did not start before delete');
+  assert.deepEqual(events,['PUT:latest local supplier']);
+
+  saveGate.resolve({id:42,name:'latest local supplier'});
+  await waitFor(()=>events.includes('DELETE'),'supplier delete did not start after save');
+  assert.equal(unregistered,false);
+  deleteGate.resolve({ok:true});
+  await deleting;
+
+  assert.equal(unregistered,true);
+  assert.equal(queue.isClosed(),true);
+  assert.equal(queue.enqueue(),false);
+  await Promise.all([queue.flush(),queue.whenIdle(),queue.close()]);
+  assert.equal(saveRequests,1);
+  assert.deepEqual(events,['PUT:latest local supplier','DELETE']);
+});
+
+test('closing a running queue settles waiters and rejects every later enqueue',async()=>{
+  const {createLatestSnapshotSaveQueue}=loadSelectionDocumentModule();
+  const requestGate=deferred();
+  let requests=0;
+  const queue=createLatestSnapshotSaveQueue({
+    delayMs:60_000,
+    snapshot:()=>({notes:'pending'}),
+    request:async()=>{
+      requests+=1;
+      return requestGate.promise;
+    }
+  });
+  queue.enqueue();
+  void queue.flush();
+  await waitFor(()=>requests===1,'save did not start');
+
+  let idleSettled=false;
+  const waiting=queue.whenIdle().then(()=>{idleSettled=true});
+  const closing=queue.close();
+  await Promise.resolve();
+  assert.equal(idleSettled,false);
+  assert.equal(queue.enqueue(),false);
+
+  requestGate.resolve({});
+  await Promise.all([waiting,closing,queue.flush()]);
+  assert.equal(idleSettled,true);
+  assert.equal(queue.isClosed(),true);
+  assert.equal(queue.isIdle(),true);
+  assert.equal(requests,1);
+});
+
+test('exclusive action lock is reentrant and only the outer finally unlocks after failure',async()=>{
+  const {createExclusiveActionLock}=loadSelectionDocumentModule();
+  assert.equal(typeof createExclusiveActionLock,'function');
+  const transitions=[];
+  const lock=createExclusiveActionLock({
+    setLocked:(value)=>transitions.push(value)
+  });
+  const innerGate=deferred();
+
+  const outer=lock.run(async()=>{
+    assert.equal(lock.depth(),1);
+    assert.equal(lock.isLocked(),true);
+    const inner=lock.run(async()=>{
+      assert.equal(lock.depth(),2);
+      await innerGate.promise;
+      throw new Error('inner failed');
+    });
+    await Promise.resolve();
+    assert.deepEqual(transitions,[true]);
+    innerGate.resolve();
+    await inner;
+  });
+
+  await assert.rejects(outer,/inner failed/);
+  assert.equal(lock.depth(),0);
+  assert.equal(lock.isLocked(),false);
+  assert.deepEqual(transitions,[true,false]);
+});
+
+test('safe reload flushes and refetches when save work starts during document GET',async()=>{
+  const {
+    createAsyncOperationRegistry,
+    flushSaveQueues,
+    loadDataAfterStableSaves
+  }=loadSelectionDocumentModule();
+  assert.equal(typeof loadDataAfterStableSaves,'function');
+  let revision=0;
+  let fetchCount=0;
+  const firstFetch=deferred();
+  const registry=createAsyncOperationRegistry({
+    onTrack:()=>{revision+=1}
+  });
+  const snapshots=[
+    {document:{positioning:'stale'}},
+    {document:{positioning:'fresh'}}
+  ];
+
+  const loading=loadDataAfterStableSaves({
+    flush:()=>flushSaveQueues(()=>[],()=>registry.snapshot()),
+    fetchData:async()=>{
+      fetchCount+=1;
+      if(fetchCount===1)await firstFetch.promise;
+      return snapshots[fetchCount-1];
+    },
+    readRevision:()=>revision,
+    hasWork:()=>!registry.isIdle(),
+    maxRefetches:2
+  });
+  await waitFor(()=>fetchCount===1,'first document GET did not start');
+
+  const saveGate=deferred();
+  registry.track(saveGate.promise);
+  firstFetch.resolve();
+  await Promise.resolve();
+  assert.equal(fetchCount,1);
+
+  saveGate.resolve();
+  const loaded=await loading;
+  assert.equal(fetchCount,2);
+  assert.equal(loaded.document.positioning,'fresh');
+});
+
+test('safe reload has a finite refetch limit under continuous new work',async()=>{
+  const {loadDataAfterStableSaves}=loadSelectionDocumentModule();
+  assert.equal(typeof loadDataAfterStableSaves,'function');
+  let revision=0;
+  let fetchCount=0;
+
+  await assert.rejects(
+    loadDataAfterStableSaves({
+      flush:async()=>{},
+      fetchData:async()=>{
+        fetchCount+=1;
+        revision+=1;
+        return {attempt:fetchCount};
+      },
+      readRevision:()=>revision,
+      hasWork:()=>false,
+      maxRefetches:2
+    }),
+    (error)=>error.code==='RELOAD_SAVE_ACTIVITY'
+  );
+  assert.equal(fetchCount,3);
 });
