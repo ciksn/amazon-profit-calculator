@@ -249,7 +249,7 @@ function renderSimilarCompetitors(){
 }
 async function copySimilarTable(code){
   const country=state.bootstrap.countries.find((item)=>item.code===code),rows=similarRowsFor(code).slice(0,5);
-  const data=rows.map((item)=>[item.image_url?`=IMAGE("${String(item.image_url).replace(/"/g,'""')}")`:'',item.product_url||'',optionalYesNoLabel(item.has_aplus),optionalYesNoLabel(item.has_video),`${country.symbol}${number(item.sale_price,2)}`,`${country.symbol}${number(item.monthly_revenue_local,2)}`,item.profit_rate==null?'':`${number(item.profit_rate,1)}%`,item.listing_date||'',item.rating==null?'':number(item.rating,1),number(item.review_count,0),competitorAnalysisText(item),reviewProsText(item),reviewConsText(item)]);
+  const data=rows.map((item)=>[item.image_url?`=IMAGE("${String(item.image_url).replace(/"/g,'""')}")`:'',item.product_url||'',optionalYesNoLabel(item.has_aplus),optionalYesNoLabel(item.has_video),`${country.symbol}${number(item.sale_price,2)}`,number(item.monthly_sales,0),`${country.symbol}${number(item.monthly_revenue_local,2)}`,item.profit_rate==null?'':`${number(item.profit_rate,1)}%`,item.listing_date||'',item.rating==null?'':number(item.rating,1),number(item.review_count,0),competitorAnalysisText(item),reviewProsText(item),reviewConsText(item)]);
   await writeRows(data);toast(`已复制 ${marketCode(code)} 站前 ${rows.length} 条同款式竞品`);
 }
 function beginCompetitorImport(code,kind='standard'){state.importCountryCode=code;state.importKind=kind;const input=$('#competitorExcelInput');input.value='';input.click()}

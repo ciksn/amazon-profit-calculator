@@ -38,8 +38,9 @@ test('同款式竞品提供卖点分析按钮并把卖点列放在评论分析�
   assert.match(js,/number\(item\.review_count,0\)\}<\/td>[\s\S]*competitorAnalysisText\(item\)[\s\S]*reviewSummaryCell\(item,'similar'\)/);
 });
 
-test('同款式复制严格输出包含可空 A+ 视频和卖点的 13 列',()=>{
+test('同款式复制严格输出包含月销量、可空 A+ 视频和卖点的 14 列',()=>{
   assert.match(js,/item\.product_url\|\|'',optionalYesNoLabel\(item\.has_aplus\),optionalYesNoLabel\(item\.has_video\)/);
+  assert.match(js,/number\(item\.sale_price,2\)\}`,number\(item\.monthly_sales,0\),`\$\{country\.symbol\}\$\{number\(item\.monthly_revenue_local,2\)\}`/);
   assert.match(js,/number\(item\.review_count,0\),competitorAnalysisText\(item\),reviewProsText\(item\),reviewConsText\(item\)/);
   assert.match(js,/function optionalYesNoLabel\(value\)\{return value==null\?'':Number\(value\)\?'是':'否'\}/);
 });
