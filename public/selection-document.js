@@ -1,7 +1,90 @@
 'use strict';
 
+(function selectionDocumentModule(root){
+function createDocumentSaveQueue({
+  delayMs=500,
+  readDocument,
+  writeDocument,
+  snapshotDocument,
+  request,
+  onSaved=()=>{},
+  onError=()=>{},
+  setTimer=setTimeout,
+  clearTimer=clearTimeout
+}={}) {
+  let pending=null;
+  let running=false;
+  let timer=null;
+  let idleWaiters=[];
+
+  const isIdle=()=>!running&&!pending&&!timer;
+  const settleIdle=()=>{
+    if(!isIdle())return;
+    const waiters=idleWaiters;
+    idleWaiters=[];
+    for(const resolve of waiters)resolve();
+  };
+  const whenIdle=()=>isIdle()
+    ? Promise.resolve()
+    : new Promise((resolve)=>idleWaiters.push(resolve));
+
+  async function run() {
+    if(running||!pending)return whenIdle();
+    if(timer){
+      clearTimer(timer);
+      timer=null;
+    }
+    running=true;
+    const snapshot=pending;
+    pending=null;
+    try{
+      const current=readDocument();
+      const saved=await request({...snapshot,version:Number(current?.version)||0});
+      const hasPending=Boolean(pending);
+      if(hasPending){
+        const live=readDocument();
+        live.version=saved.version;
+        if(Object.hasOwn(saved,'updated_at'))live.updated_at=saved.updated_at;
+      }else{
+        writeDocument(saved);
+      }
+      onSaved(saved,{hasPending});
+      running=false;
+      if(pending)return run();
+      settleIdle();
+      return saved;
+    }catch(error){
+      if(!pending)pending=snapshot;
+      running=false;
+      onError(error);
+      throw error;
+    }
+  }
+
+  function enqueue() {
+    pending=snapshotDocument();
+    if(running)return;
+    if(timer)clearTimer(timer);
+    timer=setTimer(()=>{
+      timer=null;
+      run().catch(()=>{});
+    },delayMs);
+  }
+
+  function flush() {
+    if(timer){
+      clearTimer(timer);
+      timer=null;
+    }
+    if(running)return whenIdle();
+    return pending?run():Promise.resolve();
+  }
+
+  return {enqueue,flush,whenIdle};
+}
+
 const state={
-  projectId:Number(new URLSearchParams(location.search).get('project')),
+  projectId:Number(new URLSearchParams(root.location?.search||'').get('project')),
   data:null,
   chapter:'overview',
   siteCode:'US',
@@ -9,12 +92,12 @@ const state={
   saveTimers:new Map(),
   lastRetry:null
 };
-const $=(selector,root=document)=>root.querySelector(selector);
-const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
+const $=(selector,target=root.document)=>target.querySelector(selector);
+const $$=(selector,target=root.document)=>[...target.querySelectorAll(selector)];
 const escapeHtml=(value)=>String(value??'').replace(/[&<>"']/g,(char)=>({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
 })[char]);
-const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
+const apiBase=String(root.MARGINGO_API_BASE||'').replace(/\/$/,'');
 
 async function api(path,options={}) {
   const response=await fetch(`${apiBase}${path}`,{
@@ -158,17 +241,57 @@ function renderReviewRows(rows=[]){
   </div>`).join('');
 }
 
+const DOCUMENT_FIELDS=[
+  'decision_status','decision_reason','positioning','use_scenarios','competitive_points',
+  'differentiation_items','review_issues','overview_summary','competitor_summary',
+  'supplier_summary','patent_notes','checklist'
+];
+
+function documentSnapshot(){
+  const doc=state.data.document;
+  return Object.fromEntries(DOCUMENT_FIELDS.map((fieldName)=>[
+    fieldName,
+    JSON.parse(JSON.stringify(doc[fieldName]))
+  ]));
+}
+
+const documentSaveQueue=createDocumentSaveQueue({
+  readDocument:()=>state.data.document,
+  writeDocument:(saved)=>{state.data.document=saved},
+  snapshotDocument:documentSnapshot,
+  request:(payload)=>api(`/api/projects/${state.projectId}/selection-document`,{
+    method:'PUT',body:JSON.stringify(payload)
+  }),
+  onSaved:(_saved,{hasPending})=>{
+    updateSummary();
+    if(!hasPending)setSaveState('已保存');
+  },
+  onError:(error)=>{
+    if(error.status===409){
+      setSaveState('数据已被他人更新，请刷新后再编辑',true);
+    }else{
+      setSaveState('保存失败',true,()=>documentSaveQueue.flush());
+    }
+    toast(error.message);
+  }
+});
+
+function scheduleDocumentSave(){
+  setSaveState('保存中…');
+  documentSaveQueue.enqueue();
+}
+
 function bindDocumentFields(root){
   $$('[name]',root).forEach((input)=>input.addEventListener('input',()=>{
     state.data.document[input.name]=input.value;
     updateSummary();
-    scheduleSave('document',saveDocument);
+    scheduleDocumentSave();
   }));
   $$('[data-add-list]',root).forEach((button)=>button.addEventListener('click',()=>{
     const key=button.dataset.addList;
     state.data.document[key].push(key==='review_issues'?{issue:'',ratio:'',solution:''}:{direction:'',level:'',difficulty:''});
     renderOverview();
-    scheduleSave('document',saveDocument);
+    scheduleDocumentSave();
   }));
   $$('[data-list]',root).forEach((list)=>{
     const key=list.dataset.list;
@@ -177,7 +300,7 @@ function bindDocumentFields(root){
       if(!row||!event.target.dataset.listField)return;
       state.data.document[key][Number(row.dataset.listRow)][event.target.dataset.listField]=event.target.value;
       updateSummary();
-      scheduleSave('document',saveDocument);
+      scheduleDocumentSave();
     });
     list.addEventListener('click',(event)=>{
       const button=event.target.closest('[data-remove-list]');
@@ -185,23 +308,9 @@ function bindDocumentFields(root){
       state.data.document[key].splice(Number(button.dataset.removeList),1);
       renderOverview();
       updateSummary();
-      scheduleSave('document',saveDocument);
+      scheduleDocumentSave();
     });
   });
-}
-
-async function saveDocument(){
-  const doc=state.data.document;
-  const payload={version:Number(doc.version)||0};
-  for(const fieldName of [
-    'decision_status','decision_reason','positioning','use_scenarios','competitive_points',
-    'differentiation_items','review_issues','overview_summary','competitor_summary',
-    'supplier_summary','patent_notes','checklist'
-  ])payload[fieldName]=doc[fieldName];
-  state.data.document=await api(`/api/projects/${state.projectId}/selection-document`,{
-    method:'PUT',body:JSON.stringify(payload)
-  });
-  updateSummary();
 }
 
 function siteButtons(){
@@ -465,18 +574,18 @@ function renderRisks(){
   bindDocumentFields($('#risksContent'));
   $$('[data-check]',$('#risksContent')).forEach((input)=>input.addEventListener('change',()=>{
     state.data.document.checklist[Number(input.dataset.check)].checked=input.checked;
-    updateSummary();scheduleSave('document',saveDocument);
+    updateSummary();scheduleDocumentSave();
   }));
   $$('[data-delete-check]',$('#risksContent')).forEach((button)=>button.addEventListener('click',()=>{
     if(!confirm('删除这个检查项？'))return;
     state.data.document.checklist.splice(Number(button.dataset.deleteCheck),1);
-    renderRisks();updateSummary();scheduleSave('document',saveDocument);
+    renderRisks();updateSummary();scheduleDocumentSave();
   }));
   $('#addChecklistItem').addEventListener('click',()=>{
     const label=prompt('请输入检查项');
     if(!label?.trim())return;
     state.data.document.checklist.push({id:`custom-${Date.now()}`,label:label.trim(),checked:false});
-    renderRisks();updateSummary();scheduleSave('document',saveDocument);
+    renderRisks();updateSummary();scheduleDocumentSave();
   });
 }
 
@@ -509,12 +618,18 @@ async function load(){
   window.dispatchEvent(new CustomEvent('selection-document-ready'));
 }
 
-$$('[data-chapter]').forEach((button)=>button.addEventListener('click',()=>activateChapter(button.dataset.chapter)));
-$('#retrySave').addEventListener('click',async()=>{
-  if(!state.lastRetry)return;
-  try{setSaveState('保存中…');await state.lastRetry();setSaveState('已保存')}catch(error){setSaveState('保存失败',true,state.lastRetry);toast(error.message)}
-});
-load().catch((error)=>{
-  setSaveState('载入失败',true,()=>load());
-  $('.chapter-content').innerHTML=`<div class="panel empty">${escapeHtml(error.message)}</div>`;
-});
+function bootSelectionDocument(){
+  $$('[data-chapter]').forEach((button)=>button.addEventListener('click',()=>activateChapter(button.dataset.chapter)));
+  $('#retrySave').addEventListener('click',async()=>{
+    if(!state.lastRetry)return;
+    try{setSaveState('保存中…');await state.lastRetry();setSaveState('已保存')}catch(error){setSaveState('保存失败',true,state.lastRetry);toast(error.message)}
+  });
+  load().catch((error)=>{
+    setSaveState('载入失败',true,()=>load());
+    $('.chapter-content').innerHTML=`<div class="panel empty">${escapeHtml(error.message)}</div>`;
+  });
+}
+
+if(typeof module!=='undefined'&&module.exports)module.exports={createDocumentSaveQueue};
+if(root?.document)bootSelectionDocument();
+})(typeof window!=='undefined'?window:globalThis);

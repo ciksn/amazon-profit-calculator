@@ -1,20 +1,130 @@
 'use strict';
 
-(() => {
-  const nativeFetch = window.fetch.bind(window);
+(function staticApiModule(root){
+  const dangerousBackupKeys=new Set(['__proto__','prototype','constructor']);
+  const emptyState = () => ({ version:1,nextProjectId:1,nextCompetitorId:1,projects:[],listings:{},competitors:[],overrides:{} });
+  const emptySelectionState = () => ({ version:1,nextSupplierId:1,documents:{},sites:{},suppliers:[] });
+  const isRecord=(value)=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+  const invalidBackup=()=>{ throw new Error('备份格式不正确') };
+
+  function assertSafeBackupValue(value) {
+    if(value===null||typeof value==='string'||typeof value==='boolean')return;
+    if(typeof value==='number'){
+      if(Number.isFinite(value))return;
+      invalidBackup();
+    }
+    if(Array.isArray(value)){
+      for(const item of value)assertSafeBackupValue(item);
+      return;
+    }
+    if(!isRecord(value))invalidBackup();
+    for(const [key,item] of Object.entries(value)){
+      if(dangerousBackupKeys.has(key))throw new Error(`备份包含危险字段：${key}`);
+      assertSafeBackupValue(item);
+    }
+  }
+
+  function cloneBackupValue(value) {
+    assertSafeBackupValue(value);
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function validNextId(value) {
+    return Number.isSafeInteger(value)&&value>0;
+  }
+
+  function validRecordArray(value) {
+    return Array.isArray(value)&&value.every(isRecord);
+  }
+
+  function validRecordMap(value) {
+    return isRecord(value)&&Object.values(value).every(isRecord);
+  }
+
+  function normalizeLocalState(value) {
+    assertSafeBackupValue(value);
+    if(
+      !isRecord(value)||
+      value.version!==1||
+      !validNextId(value.nextProjectId)||
+      !validNextId(value.nextCompetitorId)||
+      !validRecordArray(value.projects)||
+      !validRecordMap(value.listings)||
+      !validRecordArray(value.competitors)||
+      !validRecordMap(value.overrides)
+    )invalidBackup();
+    return {
+      version:1,
+      nextProjectId:value.nextProjectId,
+      nextCompetitorId:value.nextCompetitorId,
+      projects:cloneBackupValue(value.projects),
+      listings:cloneBackupValue(value.listings),
+      competitors:cloneBackupValue(value.competitors),
+      overrides:cloneBackupValue(value.overrides)
+    };
+  }
+
+  function normalizeSelectionState(value) {
+    assertSafeBackupValue(value);
+    if(
+      !isRecord(value)||
+      value.version!==1||
+      !validNextId(value.nextSupplierId)||
+      !validRecordMap(value.documents)||
+      !validRecordMap(value.sites)||
+      !validRecordArray(value.suppliers)
+    )invalidBackup();
+    return {
+      version:1,
+      nextSupplierId:value.nextSupplierId,
+      documents:cloneBackupValue(value.documents),
+      sites:cloneBackupValue(value.sites),
+      suppliers:cloneBackupValue(value.suppliers)
+    };
+  }
+
+  function createStaticBackup(local,selectionLocal) {
+    return {
+      version:2,
+      local:normalizeLocalState(local),
+      selectionLocal:normalizeSelectionState(selectionLocal)
+    };
+  }
+
+  function parseStaticBackup(imported,currentSelectionLocal) {
+    assertSafeBackupValue(imported);
+    if(imported?.version===1){
+      return {
+        local:normalizeLocalState(imported),
+        selectionLocal:normalizeSelectionState(currentSelectionLocal)
+      };
+    }
+    if(imported?.version!==2||!isRecord(imported.local)||!isRecord(imported.selectionLocal)){
+      invalidBackup();
+    }
+    return {
+      local:normalizeLocalState(imported.local),
+      selectionLocal:normalizeSelectionState(imported.selectionLocal)
+    };
+  }
+
+  if(typeof module!=='undefined'&&module.exports){
+    module.exports={createStaticBackup,parseStaticBackup};
+  }
+  if(!root?.document)return;
+
+  const nativeFetch = root.fetch.bind(root);
   const storageKey = 'margingo-github-pages-v1';
   const selectionStorageKey = 'margingo-selection-documents-v1';
   const cache = { rules:null,tariff:new Map() };
-  const emptyState = () => ({ version:1,nextProjectId:1,nextCompetitorId:1,projects:[],listings:{},competitors:[],overrides:{} });
   const loadState = () => {
-    try { const value = JSON.parse(localStorage.getItem(storageKey)); return value?.version === 1 ? { ...emptyState(),...value } : emptyState(); }
+    try { return normalizeLocalState(JSON.parse(localStorage.getItem(storageKey))); }
     catch { return emptyState(); }
   };
   let local = loadState();
   const save = () => localStorage.setItem(storageKey,JSON.stringify(local));
-  const emptySelectionState = () => ({ version:1,nextSupplierId:1,documents:{},sites:{},suppliers:[] });
   const loadSelectionState = () => {
-    try { const value=JSON.parse(localStorage.getItem(selectionStorageKey));return value?.version===1?{...emptySelectionState(),...value}:emptySelectionState(); }
+    try { return normalizeSelectionState(JSON.parse(localStorage.getItem(selectionStorageKey))); }
     catch { return emptySelectionState(); }
   };
   let selectionLocal=loadSelectionState();
@@ -468,11 +578,12 @@
     tools.innerHTML = '<button type="button" id="exportLocalData">导出备份</button><button type="button" id="importLocalData">导入数据</button><input id="importLocalFile" type="file" accept="application/json" hidden>';
     foot.before(tools);
     const style = document.createElement('style'); style.textContent = '.static-data-tools{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:10px 8px}.static-data-tools button{padding:7px 5px;border:1px solid #e2e2e5;border-radius:8px;background:#fff;color:#777;font-size:10px}.static-data-tools button:hover{border-color:#ff9b54;color:#e86509}'; document.head.append(style);
-    document.querySelector('#exportLocalData').onclick = () => { const blob = new Blob([JSON.stringify(local,null,2)],{ type:'application/json' });
+    document.querySelector('#exportLocalData').onclick = () => { const blob = new Blob([JSON.stringify(createStaticBackup(local,selectionLocal),null,2)],{ type:'application/json' });
       const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `MarginGo备份-${new Date().toISOString().slice(0,10)}.json`; link.click(); URL.revokeObjectURL(link.href); };
     const input = document.querySelector('#importLocalFile'); document.querySelector('#importLocalData').onclick = () => input.click();
     input.onchange = async () => { try { const imported = JSON.parse(await input.files[0].text());
-      if (imported?.version !== 1 || !Array.isArray(imported.projects)) throw new Error('备份格式不正确');
-      local = { ...emptyState(),...imported }; save(); location.reload(); } catch (error) { alert(error.message); } };
+      const restored=parseStaticBackup(imported,selectionLocal);
+      local=restored.local;selectionLocal=restored.selectionLocal;
+      save();saveSelection();location.reload(); } catch (error) { alert(error.message); } };
   });
-})();
+})(typeof window!=='undefined'?window:globalThis);
