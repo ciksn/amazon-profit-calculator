@@ -108,3 +108,13 @@ test('cleanup returns the primary failure unchanged when cleanup succeeds',async
   const finalError=await runAllCleanupSteps({primaryError,steps:[['ok',async()=>{}]]});
   assert.equal(finalError,primaryError);
 });
+
+test('smoke terminal budget exceeds the Provider retry cap but remains finite',async()=>{
+  const {codexSmokeTerminalTimeoutMs}=await helpers;
+  const timeout=codexSmokeTerminalTimeoutMs({
+    baseTimeoutMs:120_000,retryGraceMs:30_000,transportMarginMs:30_000
+  });
+  assert.equal(timeout,180_000);
+  assert.ok(timeout>120_000+30_000);
+  assert.ok(Number.isFinite(timeout));
+});

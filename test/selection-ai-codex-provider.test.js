@@ -341,14 +341,194 @@ test('Codex Provider times out while waiting for a terminal turn notification',a
     {id:4,error:{code:-32000,message:'interrupt failed with secret'}}
   ]);
   const provider=createCodexProvider({spawnProcess:()=>fake,timeoutMs:10});
-
-  await assert.rejects(within(collect(provider.streamTurn({
+  const running=collect(provider.streamTurn({
     state:{codex_thread_id:'thr_1'},system:'s',input:'i',turnId:'public_1'
-  })),100),(error)=>error.code==='CODEX_TIMEOUT');
-  const interrupt=fake.sent().find((message)=>message.method==='turn/interrupt');
-  assert.deepEqual(interrupt.params,{threadId:'thr_1',turnId:'server_turn_1'});
-  await assert.rejects(provider.interruptTurn('public_1'),(error)=>error.code==='CODEX_TURN_FAILED');
-  provider.dispose();
+  }));
+  while (!fake.sent().some((message)=>message.method==='turn/start')) {
+    await new Promise((resolve)=>setImmediate(resolve));
+  }
+  const lateCompletion=setTimeout(()=>{
+    fake.emitJson({
+      method:'item/agentMessage/delta',
+      params:{
+        threadId:'thr_1',turnId:'server_turn_1',
+        delta:'{"answer":"too late","proposal":{"summary":"","changes":[]}}'
+      }
+    });
+    fake.emitJson({
+      method:'turn/completed',
+      params:{thread:{id:'thr_1'},turn:{id:'server_turn_1',status:'completed'}}
+    });
+  },20);
+
+  try {
+    await assert.rejects(within(running,100),(error)=>error.code==='CODEX_TIMEOUT');
+    const interrupt=fake.sent().find((message)=>message.method==='turn/interrupt');
+    assert.deepEqual(interrupt.params,{threadId:'thr_1',turnId:'server_turn_1'});
+    await assert.rejects(provider.interruptTurn('public_1'),(error)=>error.code==='CODEX_TURN_FAILED');
+  } finally {
+    clearTimeout(lateCompletion);
+    provider.dispose();
+  }
+});
+
+test('Codex Provider accepts a terminal event within bounded grace after matching retry notifications',async()=>{
+  const fake=createFakeJsonlProcess([
+    {id:1,result:{platformFamily:'windows'}},
+    {id:2,result:{thread:{id:'thr_1'}}},
+    {id:3,result:{turn:{id:'server_turn_1',status:'inProgress'}}}
+  ]);
+  const provider=createCodexProvider({
+    spawnProcess:()=>fake,timeoutMs:50,retryGraceMs:40
+  });
+  const running=collect(provider.streamTurn({
+    state:{codex_thread_id:'thr_1'},system:'s',input:'i',turnId:'public_retry'
+  }));
+  while (!fake.sent().some((message)=>message.method==='turn/start')) {
+    await new Promise((resolve)=>setImmediate(resolve));
+  }
+  const timers=[
+    setTimeout(()=>fake.emitJson({
+      method:'error',
+      params:{
+        threadId:'thr_1',turnId:'server_turn_1',
+        error:{message:'retry one',codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:null}}},
+        willRetry:true
+      }
+    }),35),
+    setTimeout(()=>fake.emitJson({
+      method:'error',
+      params:{
+        threadId:'thr_1',turnId:'server_turn_1',
+        error:{message:'retry two',codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:null}}},
+        willRetry:true
+      }
+    }),65),
+    setTimeout(()=>{
+      fake.emitJson({
+        method:'item/agentMessage/delta',
+        params:{
+          threadId:'thr_1',turnId:'server_turn_1',
+          delta:'{"answer":"recovered","proposal":{"summary":"","changes":[]}}'
+        }
+      });
+      fake.emitJson({
+        method:'turn/completed',
+        params:{thread:{id:'thr_1'},turn:{id:'server_turn_1',status:'completed'}}
+      });
+    },85)
+  ];
+
+  try {
+    const events=await running;
+    assert.equal(events.at(-1).result.answer,'recovered');
+  } finally {
+    for (const timer of timers) clearTimeout(timer);
+    provider.dispose();
+  }
+});
+
+test('Codex Provider does not extend timeout for another turn or a non-retryable error',async(t)=>{
+  const cases=[
+    {
+      name:'wrong turn',
+      notification:{
+        method:'error',
+        params:{
+          threadId:'thr_1',turnId:'server_turn_other',
+          error:{message:'other turn',codexErrorInfo:'other'},willRetry:true
+        }
+      }
+    },
+    {
+      name:'willRetry false',
+      notification:{
+        method:'error',
+        params:{
+          threadId:'thr_1',turnId:'server_turn_1',
+          error:{message:'not retrying',codexErrorInfo:'other'},willRetry:false
+        }
+      }
+    }
+  ];
+
+  for (const [index,item] of cases.entries()) {
+    await t.test(item.name,async()=>{
+      const fake=createFakeJsonlProcess([
+        {id:1,result:{platformFamily:'windows'}},
+        {id:2,result:{thread:{id:'thr_1'}}},
+        {id:3,result:{turn:{id:'server_turn_1',status:'inProgress'}}}
+      ]);
+      const provider=createCodexProvider({
+        spawnProcess:()=>fake,timeoutMs:30,retryGraceMs:30
+      });
+      const running=collect(provider.streamTurn({
+        state:{codex_thread_id:'thr_1'},system:'s',input:'i',turnId:`public_no_extend_${index}`
+      }));
+      while (!fake.sent().some((message)=>message.method==='turn/start')) {
+        await new Promise((resolve)=>setImmediate(resolve));
+      }
+      const timers=[
+        setTimeout(()=>fake.emitJson(item.notification),15),
+        setTimeout(()=>{
+          fake.emitJson({
+            method:'item/agentMessage/delta',
+            params:{
+              threadId:'thr_1',turnId:'server_turn_1',
+              delta:'{"answer":"must be too late","proposal":{"summary":"","changes":[]}}'
+            }
+          });
+          fake.emitJson({
+            method:'turn/completed',
+            params:{thread:{id:'thr_1'},turn:{id:'server_turn_1',status:'completed'}}
+          });
+        },45)
+      ];
+      try {
+        await assert.rejects(within(running,100),(error)=>error.code==='CODEX_TIMEOUT');
+      } finally {
+        for (const timer of timers) clearTimeout(timer);
+        provider.dispose();
+      }
+    });
+  }
+});
+
+test('Codex Provider retry notifications cannot extend beyond the absolute cap',async()=>{
+  const fake=createFakeJsonlProcess([
+    {id:1,result:{platformFamily:'windows'}},
+    {id:2,result:{thread:{id:'thr_1'}}},
+    {id:3,result:{turn:{id:'server_turn_1',status:'inProgress'}}}
+  ]);
+  const provider=createCodexProvider({
+    spawnProcess:()=>fake,timeoutMs:40,retryGraceMs:40
+  });
+  const running=collect(provider.streamTurn({
+    state:{codex_thread_id:'thr_1'},system:'s',input:'i',turnId:'public_cap'
+  }));
+  while (!fake.sent().some((message)=>message.method==='turn/start')) {
+    await new Promise((resolve)=>setImmediate(resolve));
+  }
+  const started=Date.now();
+  const retry=(delay)=>setTimeout(()=>fake.emitJson({
+    method:'error',
+    params:{
+      threadId:'thr_1',turnId:'server_turn_1',
+      error:{message:'still retrying',codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:null}}},
+      willRetry:true
+    }
+  }),delay);
+  const timers=[retry(25),retry(50),retry(70),retry(85),retry(100),retry(115)];
+
+  try {
+    await assert.rejects(within(running,140),(error)=>error.code==='CODEX_TIMEOUT');
+    const elapsed=Date.now()-started;
+    assert.ok(elapsed>=65,`retry cap fired too early at ${elapsed}ms`);
+    assert.ok(elapsed<130,`retry cap was not bounded: ${elapsed}ms`);
+  } finally {
+    for (const timer of timers) clearTimeout(timer);
+    provider.dispose();
+  }
 });
 
 test('Codex Provider aborts a turn wait and removes public turn bookkeeping',async()=>{

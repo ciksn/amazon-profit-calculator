@@ -1028,15 +1028,24 @@ test('default factory is lazy and disposable without starting either real provid
 test('default Codex Provider reads the configured executable and bounded timeout',()=>{
   assert.deepEqual(selectionAiProviderConfig({
     CODEX_COMMAND:' C:\\tools\\codex.exe ',
-    CODEX_AI_TIMEOUT_MS:'120000'
+    CODEX_AI_TIMEOUT_MS:'120000',
+    CODEX_AI_RETRY_GRACE_MS:'45000'
   }),{
-    codex:{command:'C:\\tools\\codex.exe',timeoutMs:120000}
+    codex:{command:'C:\\tools\\codex.exe',timeoutMs:120000,retryGraceMs:45000}
   });
   assert.deepEqual(selectionAiProviderConfig({
     CODEX_COMMAND:' ',
-    CODEX_AI_TIMEOUT_MS:'not-a-number'
+    CODEX_AI_TIMEOUT_MS:'not-a-number',
+    CODEX_AI_RETRY_GRACE_MS:'not-a-number'
   }),{
-    codex:{command:'codex',timeoutMs:120000}
+    codex:{command:'codex',timeoutMs:120000,retryGraceMs:30000}
+  });
+  assert.deepEqual(selectionAiProviderConfig({
+    CODEX_COMMAND:'codex',
+    CODEX_AI_TIMEOUT_MS:'1000',
+    CODEX_AI_RETRY_GRACE_MS:'999999'
+  }),{
+    codex:{command:'codex',timeoutMs:1000,retryGraceMs:120000}
   });
 });
 

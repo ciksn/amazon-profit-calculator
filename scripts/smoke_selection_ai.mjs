@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {
   cleanupTemporaryProjects,
+  codexSmokeTerminalTimeoutMs,
   createSmokeProjectName,
   runAllCleanupSteps,
   validateCodexHealth
@@ -9,14 +10,22 @@ import {
 
 const require=createRequire(import.meta.url);
 const db=require('../lib/db');
-const {createDefaultSelectionAiService}=require('../lib/selection-ai/service');
+const {
+  createDefaultSelectionAiService,
+  selectionAiProviderConfig
+}=require('../lib/selection-ai/service');
 const {createServer,selectionDocumentPayload}=require('../server');
 
 if (!String(process.env.DATABASE_URL||'').trim()) {
   throw new Error('smoke_selection_ai requires DATABASE_URL before it can create test data');
 }
 
-const terminalTimeoutMs=120_000;
+const codexConfig=selectionAiProviderConfig(process.env).codex;
+const terminalTimeoutMs=codexSmokeTerminalTimeoutMs({
+  baseTimeoutMs:codexConfig.timeoutMs,
+  retryGraceMs:codexConfig.retryGraceMs,
+  transportMarginMs:30_000
+});
 const projectName=createSmokeProjectName();
 let projectId=null;
 let baseUrl='';
