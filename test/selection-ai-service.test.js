@@ -334,6 +334,87 @@ test('persists a deterministic bounded summary without another provider call',as
   assert.equal(codex.inputs[0].input.includes('history-0'),true);
 });
 
+test('incrementally summarizes more than 200 messages without window loss or duplication',async(t)=>{
+  const project=await createProject('AI incremental long history');
+  const codex=fakeProviderThatReplies('new answer');
+  const service=createService({codex,openai:fakeProviderThatReplies()});
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+  const repository=createSelectionAiRepository(db);
+  const history=[];
+  const markerContent=new Map([
+    [0,'EARLIEST_MARKER'],
+    [31,'PRE_WINDOW_MARKER'],
+    [200,'SECOND_PAGE_MARKER'],
+    [212,'NEWLY_ELIGIBLE_MARKER']
+  ]);
+  for (let index=0;index<230;index++) {
+    history.push(await repository.createMessage({
+      projectId:project.id,
+      role:index%2?'assistant':'user',
+      provider:'codex',
+      content:`history-${index} ${markerContent.get(index)||''}`.trim(),
+      status:'completed'
+    }));
+  }
+  await repository.setSummary(project.id,'LEGACY_WINDOW_SNAPSHOT');
+
+  await collect(service.streamTurn({
+    projectId:project.id,chapter:'overview',message:'first incremental turn'
+  }));
+  let state=await service.getState(project.id);
+  assert.match(state.conversation.summary,/EARLIEST_MARKER/);
+  assert.match(state.conversation.summary,/PRE_WINDOW_MARKER/);
+  assert.match(state.conversation.summary,/SECOND_PAGE_MARKER/);
+  assert.doesNotMatch(state.conversation.summary,/NEWLY_ELIGIBLE_MARKER/);
+  assert.doesNotMatch(state.conversation.summary,/LEGACY_WINDOW_SNAPSHOT/);
+  assert.equal(Number(state.conversation.summary_message_id),history[211].id);
+  assert.equal(codex.inputs[0].input.includes('EARLIEST_MARKER'),true);
+
+  await collect(service.streamTurn({
+    projectId:project.id,chapter:'overview',message:'second incremental turn'
+  }));
+  state=await service.getState(project.id);
+  const occurrences=(marker)=>state.conversation.summary.split(marker).length-1;
+  assert.equal(occurrences('EARLIEST_MARKER'),1);
+  assert.equal(occurrences('PRE_WINDOW_MARKER'),1);
+  assert.equal(occurrences('SECOND_PAGE_MARKER'),1);
+  assert.equal(occurrences('NEWLY_ELIGIBLE_MARKER'),1);
+  assert.equal(Number(state.conversation.summary_message_id),history[213].id);
+});
+
+test('bounded incremental summary keeps newer complete message excerpts',async(t)=>{
+  const project=await createProject('AI newest bounded summary');
+  const codex=fakeProviderThatReplies('new answer');
+  const service=createService({codex,openai:fakeProviderThatReplies()});
+  t.after(async()=>{ service.dispose();await removeProject(project); });
+  const repository=createSelectionAiRepository(db);
+  const history=[];
+  for (let index=0;index<45;index++) {
+    const marker=index===0
+      ? 'OLDEST_BOUND_MARKER'
+      : index===26
+        ? 'NEWEST_SUMMARIZED_MARKER'
+        : `bounded-${index}`;
+    history.push(await repository.createMessage({
+      projectId:project.id,
+      role:index%2?'assistant':'user',
+      provider:'codex',
+      content:`${marker}-${'x'.repeat(400)}`,
+      status:'completed'
+    }));
+  }
+
+  await collect(service.streamTurn({
+    projectId:project.id,chapter:'overview',message:'bound the summary'
+  }));
+  const state=await service.getState(project.id);
+
+  assert.ok(state.conversation.summary.length<=8000);
+  assert.doesNotMatch(state.conversation.summary,/OLDEST_BOUND_MARKER/);
+  assert.match(state.conversation.summary,/NEWEST_SUMMARIZED_MARKER/);
+  assert.equal(Number(state.conversation.summary_message_id),history[26].id);
+});
+
 test('persists the final buffered text when a provider fails',async(t)=>{
   const project=await createProject('AI partial failure');
   const provider={
