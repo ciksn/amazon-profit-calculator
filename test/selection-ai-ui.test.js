@@ -237,7 +237,7 @@ class FakeElement {
 function panelHarness({
   turn='complete',proposal=null,apply='conflict',narrow=true,confirmResponses=[true],
   interrupt='success',providerError=false,resolvedStatus='',delayStateAfterTurn=false,
-  stateErrorAfterTurn=false
+  stateErrorAfterTurn=false,flush='success'
 }={}){
   const document={activeElement:null,elements:{},querySelector(selector){return this.elements[selector]||null}};
   for(const id of [
@@ -260,6 +260,8 @@ function panelHarness({
   const interruptStarted=new Promise((resolve)=>{notifyInterruptStarted=resolve});
   let releaseState;
   const stateGate=new Promise((resolve)=>{releaseState=resolve});
+  let releaseFlush;
+  const flushGate=new Promise((resolve)=>{releaseFlush=resolve});
   const statePayload=()=>({
     conversation:{active_provider:'codex'},
     messages:turn==='complete'&&requests.some((item)=>item.path.endsWith('/turns'))
@@ -334,10 +336,24 @@ function panelHarness({
       return jsonResponse(statePayload());
     }
   };
-  const app={reloads:0,getSnapshot:()=>({projectId:7,chapter:'risks',data:{}}),async reload(){this.reloads+=1}};
+  const app={
+    reloads:0,
+    flushes:0,
+    getSnapshot:()=>({projectId:7,chapter:'risks',data:{}}),
+    async flushPendingSaves(){
+      this.flushes+=1;
+      if(flush==='delayed')await flushGate;
+      if(flush==='delay-second'&&this.flushes===2)await flushGate;
+      if(flush==='failure')throw new Error('document save failed');
+    },
+    async reload(){this.reloads+=1}
+  };
   const panelElement=document.elements['#selectionAiPanel'];
   panelElement.focusables=[document.elements['#aiDrawerClose'],document.elements['#aiProvider'],document.elements['#aiComposer'],document.elements['#aiSend']];
-  return {root,document,elements:document.elements,requests,order,app,listeners,media,alerts,releaseState};
+  return {
+    root,document,elements:document.elements,requests,order,app,listeners,media,alerts,
+    releaseState,releaseFlush
+  };
 }
 
 test('轻量 DOM/fetch/SSE 集成：发送使用当前章节并跨 chunk 渲染完成消息',async()=>{
@@ -531,6 +547,125 @@ function fakeProposalCard(document,checkedValues=[]){
 function proposalTarget(card,action){
   return {closest(selector){if(selector==='[data-proposal-id]')return card;if(selector===`[data-${action}-proposal]`)return {};return null}};
 }
+
+test('send waits for pending document saves and keeps the draft when flush fails',async()=>{
+  const delayed=panelHarness({flush:'delayed'});
+  const delayedPanel=ui.createPanel(delayed.root);
+  await delayedPanel.init({app:delayed.app,apiBase:''});
+  delayed.elements['#aiComposer'].value='analyze the latest local draft';
+  const sending=delayed.elements['#aiSend'].emit('click');
+  for(let index=0;index<20&&delayed.app.flushes===0;index+=1)await Promise.resolve();
+
+  assert.equal(delayed.app.flushes,1);
+  assert.equal(delayed.requests.some((item)=>item.path.endsWith('/turns')),false);
+  assert.equal(delayed.elements['#aiComposer'].value,'analyze the latest local draft');
+
+  delayed.releaseFlush();
+  await sending;
+  assert.equal(delayed.requests.some((item)=>item.path.endsWith('/turns')),true);
+
+  const failed=panelHarness({flush:'failure'});
+  const failedPanel=ui.createPanel(failed.root);
+  await failedPanel.init({app:failed.app,apiBase:''});
+  failed.elements['#aiComposer'].value='keep this unsaved request';
+  await failed.elements['#aiSend'].emit('click');
+
+  assert.equal(failed.requests.some((item)=>item.path.endsWith('/turns')),false);
+  assert.equal(failed.elements['#aiComposer'].value,'keep this unsaved request');
+  assert.match(failed.elements['#aiErrorActions'].innerHTML,/document save failed/);
+});
+
+test('apply and reject wait for successful save flushes before proposal requests',async()=>{
+  const proposal={id:11,status:'pending',summary:'proposal',changes:[
+    {scope:'document',field:'positioning',before:'old',after:'new',reason:'clearer'}
+  ]};
+
+  for(const action of ['apply','reject']){
+    const delayed=panelHarness({proposal,apply:'success',flush:'delayed'});
+    const panel=ui.createPanel(delayed.root);
+    await panel.init({app:delayed.app,apiBase:''});
+    const card=fakeProposalCard(delayed.document,[true]);
+    const acting=delayed.elements['#aiProposals'].emit('click',{
+      target:proposalTarget(card,action)
+    });
+    for(let index=0;index<20&&delayed.app.flushes===0;index+=1)await Promise.resolve();
+
+    assert.equal(delayed.app.flushes,1);
+    assert.equal(delayed.requests.some((item)=>item.path.endsWith(`/${action}`)),false);
+
+    delayed.releaseFlush();
+    await acting;
+    assert.equal(delayed.requests.some((item)=>item.path.endsWith(`/${action}`)),true);
+
+    const failed=panelHarness({proposal,apply:'success',flush:'failure'});
+    const failedPanel=ui.createPanel(failed.root);
+    await failedPanel.init({app:failed.app,apiBase:''});
+    await failed.elements['#aiProposals'].emit('click',{
+      target:proposalTarget(fakeProposalCard(failed.document,[true]),action)
+    });
+
+    assert.equal(failed.requests.some((item)=>item.path.endsWith(`/${action}`)),false);
+    assert.match(failed.elements['#aiProposals'].innerHTML,/data-proposal-id="11"/);
+    assert.match(failed.elements['#aiErrorActions'].innerHTML,/document save failed/);
+  }
+});
+
+test('conflict refresh flushes saves before reloading and aborts reload on failure',async()=>{
+  const proposal={id:11,status:'conflicted',summary:'conflict',changes:[
+    {scope:'document',field:'positioning',before:'old',after:'new',reason:'clearer'}
+  ]};
+  const refreshTarget=(card)=>({
+    closest(selector){
+      if(selector==='[data-proposal-id]')return card;
+      if(selector==='[data-refresh-document]')return {};
+      return null;
+    }
+  });
+
+  const delayed=panelHarness({proposal,flush:'delayed'});
+  const delayedPanel=ui.createPanel(delayed.root);
+  await delayedPanel.init({app:delayed.app,apiBase:''});
+  const refreshing=delayed.elements['#aiProposals'].emit('click',{
+    target:refreshTarget(fakeProposalCard(delayed.document,[true]))
+  });
+  for(let index=0;index<20&&delayed.app.flushes===0;index+=1)await Promise.resolve();
+
+  assert.equal(delayed.app.flushes,1);
+  assert.equal(delayed.app.reloads,0);
+  delayed.releaseFlush();
+  await refreshing;
+  assert.equal(delayed.app.reloads,1);
+
+  const failed=panelHarness({proposal,flush:'failure'});
+  const failedPanel=ui.createPanel(failed.root);
+  await failedPanel.init({app:failed.app,apiBase:''});
+  await failed.elements['#aiProposals'].emit('click',{
+    target:refreshTarget(fakeProposalCard(failed.document,[true]))
+  });
+  assert.equal(failed.app.reloads,0);
+  assert.match(failed.elements['#aiErrorActions'].innerHTML,/document save failed/);
+});
+
+test('successful apply flushes edits made during the proposal request before reload',async()=>{
+  const proposal={id:11,status:'pending',summary:'proposal',changes:[
+    {scope:'document',field:'positioning',before:'old',after:'new',reason:'clearer'}
+  ]};
+  const harness=panelHarness({proposal,apply:'success',flush:'delay-second'});
+  const panel=ui.createPanel(harness.root);
+  await panel.init({app:harness.app,apiBase:''});
+  const applying=harness.elements['#aiProposals'].emit('click',{
+    target:proposalTarget(fakeProposalCard(harness.document,[true]),'apply')
+  });
+  for(let index=0;index<30&&harness.app.flushes<2;index+=1)await Promise.resolve();
+
+  assert.equal(harness.requests.some((item)=>item.path.endsWith('/apply')),true);
+  assert.equal(harness.app.flushes,2);
+  assert.equal(harness.app.reloads,0);
+
+  harness.releaseFlush();
+  await applying;
+  assert.equal(harness.app.reloads,1);
+});
 
 test('proposal 实际 checked/body：成功 apply、取消、零勾选与 reject',async()=>{
   const proposal={id:11,status:'pending',summary:'文本提案',changes:[

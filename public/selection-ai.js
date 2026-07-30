@@ -226,6 +226,12 @@
       return payload;
     }
 
+    async function flushWorkbenchSaves() {
+      if(typeof state.app?.flushPendingSaves==='function'){
+        await state.app.flushPendingSaves();
+      }
+    }
+
     function cacheDisplay() {
       writeProjectCache(view.localStorage,state.projectId,{messages:state.messages,proposals:state.proposals});
     }
@@ -378,16 +384,28 @@
       state.chapter=snapshot.chapter;
       const projectId=state.projectId;
       const original=String(message??'').trim();
+      const composerValueAtStart=elements.composer.value;
       if (!original||state.generatingProjectId===projectId||state.syncingProjectId===projectId||state.switchingProvider) return;
       state.lastMessage=original;
+      state.syncingProjectId=projectId;
+      clearFailure();
+      updateControls();
+      try {
+        await flushWorkbenchSaves();
+      } catch (error) {
+        state.syncingProjectId=null;
+        showFailure(error,{operation:'generation'});
+        updateControls();
+        return;
+      }
+      state.syncingProjectId=null;
       state.generatedText='';
       state.turnId=null;
       state.generatingProjectId=state.projectId;
       const controller=new AbortController();
       state.controller=controller;
       let completed=false;
-      clearFailure();
-      elements.composer.value='';
+      if(elements.composer.value===composerValueAtStart)elements.composer.value='';
       state.messages.push({role:'user',provider:state.provider,content:original,status:'completed',created_at:new Date().toISOString()});
       renderMessages();
       const output=appendStreamingMessage();
@@ -485,9 +503,11 @@
       if (!change_indexes.length) { view.alert('请至少选择一项修改');return; }
       if (!view.confirm(`确认应用选中的 ${change_indexes.length} 项文本修改？`)) return;
       try {
+        await flushWorkbenchSaves();
         await request(`/proposals/${proposalId}/apply`,{
           method:'POST',body:JSON.stringify({change_indexes})
         });
+        await flushWorkbenchSaves();
         await state.app.reload();
         await replaceWithServerState();
       } catch (error) {
@@ -505,6 +525,7 @@
       const proposalId=Number(card.dataset.proposalId);
       if (!view.confirm('确认拒绝整份修改提案？')) return;
       try {
+        await flushWorkbenchSaves();
         await request(`/proposals/${proposalId}/reject`,{method:'POST'});
         await replaceWithServerState();
       } catch (error) { showFailure(error,{operation:'proposal'}); }
@@ -513,6 +534,7 @@
     async function refreshConflictedProposal(card) {
       const proposalId=Number(card.dataset.proposalId);
       try {
+        await flushWorkbenchSaves();
         await state.app.reload();
         await replaceWithServerState();
         const proposal=state.proposals.find((item)=>Number(item.id)===proposalId);
