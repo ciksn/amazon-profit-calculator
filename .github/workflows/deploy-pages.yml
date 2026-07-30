@@ -27,8 +27,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
       - name: Update Japan Customs tariff snapshot
         run: node scripts/update_japan_tariff.mjs
+      - name: Build current server UI for GitHub Pages
+        env:
+          MARGINGO_PAGES_API_BASE: ${{ vars.MARGINGO_PAGES_API_BASE || 'https://www.200392.xyz' }}
+        run: npm run build:pages
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

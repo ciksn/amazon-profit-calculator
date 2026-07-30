@@ -78,5 +78,33 @@ npm test
 npm run test:coverage
 ```
 
-随后依次打开三个页面，验证项目修改互相可见、规则保存后重新计算、竞品分析结果重启后仍存在、小站点方案记录在另一浏览器可读取。不要执行 `npm run build:pages`，以免生成新的静态 Pages 文件并混淆原线上版本。
+随后依次打开三个页面，验证项目修改互相可见、规则保存后重新计算、竞品分析结果重启后仍存在、小站点方案记录在另一浏览器可读取。服务器部署流程不要执行 `npm run build:pages`；GitHub Actions 的 Pages 工作流会单独生成 Pages 发布文件。
+
+## GitHub Pages 飞书内嵌入口
+
+GitHub Pages 的飞书卡片入口为：
+
+```text
+https://ciksn.github.io/amazon-profit-calculator/embed.html
+```
+
+Pages 只托管当前服务器版本的前端资源。卡片的数据、利润计算、竞品分析和 AI 请求仍发送到 `https://www.200392.xyz`。
+
+服务器生产环境必须包含精确的 Pages Origin：
+
+```text
+CORS_ORIGINS=https://ciksn.github.io
+```
+
+如果还需要允许其他前端域名，使用英文逗号分隔，不能填写带仓库路径的 URL。修改服务器环境变量后需重新创建应用容器或重启 Node 进程，使配置生效。
+
+Pages 工作流会在发布时执行 `npm ci` 和 `npm run build:pages`，不会继续上传仓库中历史遗留的旧卡片。默认 API 地址为 `https://www.200392.xyz`，也可在 GitHub 仓库 Actions Variables 中设置 `MARGINGO_PAGES_API_BASE` 覆盖；该变量必须是没有路径、查询参数或片段的 HTTPS Origin。
+
+从指定分支手动覆盖 Pages：
+
+```text
+gh workflow run deploy-pages.yml --ref codex/pages-live-backend
+```
+
+发布后检查 `embed-config.js` 指向正式后端，并使用 Origin `https://ciksn.github.io` 对 `/api/health` 执行预检，确认响应包含 `Access-Control-Allow-Origin: https://ciksn.github.io`。
 
