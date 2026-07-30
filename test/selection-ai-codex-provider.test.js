@@ -686,6 +686,56 @@ test('Codex Provider retry notifications cannot extend beyond the absolute cap',
   }
 });
 
+test('Codex Provider rejects completion after the absolute cap but before a sliding cap',async()=>{
+  const fake=createFakeJsonlProcess([
+    {id:1,result:{platformFamily:'windows'}},
+    {id:2,result:{thread:{id:'thr_1'}}},
+    {id:3,result:{turn:{id:'server_turn_1',status:'inProgress'}}}
+  ]);
+  const provider=createCodexProvider({
+    spawnProcess:()=>fake,timeoutMs:50,retryGraceMs:50
+  });
+  const running=collect(provider.streamTurn({
+    state:{codex_thread_id:'thr_1'},system:'s',input:'i',turnId:'public_cap_late_completion'
+  }));
+  while (!fake.sent().some((message)=>message.method==='turn/start')) {
+    await new Promise((resolve)=>setImmediate(resolve));
+  }
+  const retry=(delay)=>setTimeout(()=>fake.emitJson({
+    method:'error',
+    params:{
+      threadId:'thr_1',turnId:'server_turn_1',
+      error:{message:'retrying',codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:null}}},
+      willRetry:true
+    }
+  }),delay);
+  const timers=[
+    retry(35),
+    retry(70),
+    retry(90),
+    setTimeout(()=>{
+      fake.emitJson({
+        method:'item/agentMessage/delta',
+        params:{
+          threadId:'thr_1',turnId:'server_turn_1',
+          delta:'{"answer":"after cap","proposal":{"summary":"","changes":[]}}'
+        }
+      });
+      fake.emitJson({
+        method:'turn/completed',
+        params:{thread:{id:'thr_1'},turn:{id:'server_turn_1',status:'completed'}}
+      });
+    },120)
+  ];
+
+  try {
+    await assert.rejects(within(running,170),(error)=>error.code==='CODEX_TIMEOUT');
+  } finally {
+    for (const timer of timers) clearTimeout(timer);
+    provider.dispose();
+  }
+});
+
 test('Codex Provider aborts a turn wait and removes public turn bookkeeping',async()=>{
   const fake=createFakeJsonlProcess([
     {id:1,result:{platformFamily:'windows'}},
@@ -703,6 +753,61 @@ test('Codex Provider aborts a turn wait and removes public turn bookkeeping',asy
 
   await assert.rejects(within(running,100),(error)=>error.code==='CODEX_TURN_INTERRUPTED');
   await assert.rejects(provider.interruptTurn('public_1'),(error)=>error.code==='CODEX_TURN_FAILED');
+  provider.dispose();
+});
+
+test('Codex Provider aborts during retry grace, interrupts once, and ignores late completion',async()=>{
+  const fake=createFakeJsonlProcess([
+    {id:1,result:{platformFamily:'windows'}},
+    {id:2,result:{thread:{id:'thr_1'}}},
+    {id:3,result:{turn:{id:'server_turn_1',status:'inProgress'}}},
+    {id:4,result:{}}
+  ]);
+  const provider=createCodexProvider({
+    spawnProcess:()=>fake,timeoutMs:100,retryGraceMs:100
+  });
+  const controller=new AbortController();
+  const running=collect(provider.streamTurn({
+    state:{codex_thread_id:'thr_1'},system:'s',input:'i',
+    turnId:'public_retry_abort',signal:controller.signal
+  }));
+  while (!fake.sent().some((message)=>message.method==='turn/start')) {
+    await new Promise((resolve)=>setImmediate(resolve));
+  }
+  fake.emitJson({
+    method:'error',
+    params:{
+      threadId:'thr_1',turnId:'server_turn_1',
+      error:{message:'retrying',codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:null}}},
+      willRetry:true
+    }
+  });
+  await new Promise((resolve)=>setImmediate(resolve));
+  controller.abort();
+
+  await assert.rejects(within(running,50),(error)=>error.code==='CODEX_TURN_INTERRUPTED');
+  await new Promise((resolve)=>setImmediate(resolve));
+  const interrupts=fake.sent().filter((message)=>message.method==='turn/interrupt');
+  assert.equal(interrupts.length,1);
+  assert.deepEqual(interrupts[0].params,{threadId:'thr_1',turnId:'server_turn_1'});
+
+  fake.emitJson({
+    method:'item/agentMessage/delta',
+    params:{
+      threadId:'thr_1',turnId:'server_turn_1',
+      delta:'{"answer":"too late","proposal":{"summary":"","changes":[]}}'
+    }
+  });
+  fake.emitJson({
+    method:'turn/completed',
+    params:{thread:{id:'thr_1'},turn:{id:'server_turn_1',status:'completed'}}
+  });
+  await new Promise((resolve)=>setTimeout(resolve,120));
+  assert.equal(fake.sent().filter((message)=>message.method==='turn/interrupt').length,1);
+  await assert.rejects(
+    provider.interruptTurn('public_retry_abort'),
+    (error)=>error.code==='CODEX_TURN_FAILED'
+  );
   provider.dispose();
 });
 

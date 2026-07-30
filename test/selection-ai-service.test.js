@@ -1047,6 +1047,20 @@ test('default Codex Provider reads the configured executable and bounded timeout
   }),{
     codex:{command:'codex',timeoutMs:1000,retryGraceMs:120000}
   });
+  assert.deepEqual(selectionAiProviderConfig({
+    CODEX_COMMAND:'codex',
+    CODEX_AI_RETRY_GRACE_MS:'0'
+  }).codex,{
+    command:'codex',timeoutMs:120000,retryGraceMs:0
+  });
+  for (const retryGrace of ['-1','   ']) {
+    assert.deepEqual(selectionAiProviderConfig({
+      CODEX_COMMAND:'codex',
+      CODEX_AI_RETRY_GRACE_MS:retryGrace
+    }).codex,{
+      command:'codex',timeoutMs:120000,retryGraceMs:30000
+    });
+  }
 });
 
 test.after(async()=>db.close());
