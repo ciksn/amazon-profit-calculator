@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 1,
+  "appID": "cli_aaeaf307edb89bfc",
+  "blockTypeID": "blk_6a604f1a4c804bf3e97b52d9",
+  "projectName": "MarginGo",
+  "initialHeight": 900,
+  "contributes": {
+    "addPanel": {
+      "initialHeight": 900,
+      "view": "index.html"
+    }
+  }
+}

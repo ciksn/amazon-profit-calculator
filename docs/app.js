@@ -18,7 +18,6 @@ const $$ = (selector, root=document) => [...root.querySelectorAll(selector)];
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g,(char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[char]));
 const saveTimers = new Map();
 const apiBase = String(window.MARGINGO_API_BASE || '').replace(/\/$/,'');
-const dashboardApiBase = String(window.MARGINGO_DASHBOARD_API || 'http://127.0.0.1:4180').replace(/\/$/,'');
 
 const MARKET_PORTALS = [
   ['US','纽约','10001','https://www.amazon.com'],
@@ -110,14 +109,7 @@ function decodeSharedState(value) {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 function sharedProjectKey(project) {
-  const storageKey = `margingo-full-key:${project.id}`;
-  let key = localStorage.getItem(storageKey);
-  if (!key) {
-    key = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem(storageKey,key);
-  }
-  localStorage.setItem(`margingo-shared-project:${key}`,String(project.id));
-  return key;
+  return project.share_key;
 }
 function projectSnapshot(project) {
   return { v:1,key:sharedProjectKey(project),product:{ name:project.name,cost_cny:project.cost_cny,length:project.length,width:project.width,height:project.height,
@@ -135,14 +127,11 @@ async function importSharedProjectFromHash() {
   if (!encoded) return null;
   const payload = decodeSharedState(encoded);
   if (payload?.v !== 1 || !payload.product || !Array.isArray(payload.listings)) throw new Error('调整链接格式不正确');
-  const mappingKey = `margingo-full-import:${encoded.slice(0,80)}`; let project = null;
-  const mappedId = (payload.key && localStorage.getItem(`margingo-shared-project:${payload.key}`)) || localStorage.getItem(mappingKey);
-  if (mappedId) project = await api(`/api/projects/${mappedId}`).catch(() => null);
+  let project = null;
+  if (payload.key) project = await api(`/api/projects/by-share-key/${encodeURIComponent(payload.key)}`).catch(() => null);
   if (!project) {
-    project = await api('/api/projects',{ method:'POST',body:JSON.stringify({ name:payload.product.name || '恢复的品类' }) });
-    localStorage.setItem(mappingKey,String(project.id));
+    project = await api('/api/projects',{ method:'POST',body:JSON.stringify({ name:payload.product.name || '恢复的品类',share_key:payload.key }) });
   }
-  if (payload.key) localStorage.setItem(`margingo-shared-project:${payload.key}`,String(project.id));
   project = await api(`/api/projects/${project.id}`,{ method:'PUT',body:JSON.stringify(payload.product) });
   for (const row of project.listings) if (row.selected) project = await api(`/api/projects/${project.id}/countries/${row.country_code}`,{ method:'PUT',body:JSON.stringify({ selected:false }) });
   for (const item of payload.listings) if (project.listings.some((row) => row.country_code === item.country_code)) {
@@ -222,36 +211,6 @@ async function calculateAll() {
   renderCategoryList();
 }
 
-async function addProjectToDashboard(projectId) {
-  const project=findProject(projectId);
-  if (!project) return;
-  if (!String(project.owner_name || '').trim() || !String(project.parent_asin || '').trim()) {
-    openProductModal(project.id);
-    return toast('请先填写负责人和父 ASIN，再加入产品看板');
-  }
-  try {
-    await calculateProject(project.id,false);
-    const results=state.resultsByProject[project.id] || [];
-    const sites=project.listings.filter((listing)=>listing.selected).map((listing)=>{
-      const country=countryFor(listing.country_code);const result=results.find((item)=>item.country_code===listing.country_code);
-      return { country_code:listing.country_code,country_name:country?.name || '',currency:listing.currency,symbol:listing.symbol,
-        sale_price:Number(listing.sale_price) || 0,sales_qty:0,unit_profit:result?.profit ?? null,
-        profit_rate:result?.profit_rate ?? null,calculation_json:result || null };
-    });
-    const response=await fetch(`${dashboardApiBase}/api/manual-products/from-calculator`,{
-      method:'POST',headers:{ 'Content-Type':'application/json' },body:JSON.stringify({
-        owner_name:project.owner_name,parent_asin:project.parent_asin,child_asin:project.child_asin,product_name:project.name,
-        image_data:project.image_data,length:project.length,width:project.width,height:project.height,dimension_unit:project.dimension_unit,
-        weight:project.weight,weight_unit:project.weight_unit,cost_cny:project.cost_cny,sales_amount_cny:project.sales_amount_cny,
-        six_day_capacity:project.six_day_capacity,source_project_id:project.id,sites
-      })
-    });
-    const payload=await response.json().catch(()=>({}));
-    if (!response.ok) throw new Error(payload.error || '加入看板失败');
-    toast('已加入个人利润看板；再次点击会更新计算结果');
-  } catch (error) { toast(error.message); }
-}
-
 function renderSitePortal() {
   $('#sitePortal').innerHTML = MARKET_PORTALS.map(([code,city,postal,url]) => `<div class="portal-site"><a href="${url}" target="_blank" rel="noopener" title="打开 ${city} 所在亚马逊站点">${code}</a><button type="button" data-copy-postal="${escapeHtml(postal)}" title="复制${city}邮编">${escapeHtml(postal)}</button></div>`).join('');
   $$('[data-copy-postal]').forEach((button) => button.onclick = () => copyPostal(button.dataset.copyPostal));
@@ -302,7 +261,7 @@ function categoryCard(project,index) {
       </button>
       <div class="category-sites"><small>测算站点</small><div>${siteButtons}</div></div>
       <div class="category-row-actions">
-        <button class="add-dashboard" type="button" data-add-dashboard="${project.id}" title="把当前计算结果加入个人利润看板">加入产品看板</button>
+        <a class="copy-category" href="./selection-document.html?project=${project.id}">选品文档</a>
         <button class="copy-category" type="button" data-copy-site-profit="${project.id}" title="复制站点、产品名、售价和利润率">各站点利润率</button>
         <button class="delete-category" type="button" data-delete-project="${project.id}" aria-label="删除品类" title="删除品类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button>
         <button class="edit-category" type="button" data-edit-project="${project.id}" aria-label="编辑 ${escapeHtml(project.name)}" title="编辑品类信息">编辑</button>
@@ -355,7 +314,6 @@ function bindCategoryEvents() {
     toggleExpanded(row.dataset.expandRow);
   });
   $$('[data-delete-project]').forEach((button) => button.onclick = () => deleteProject(button.dataset.deleteProject));
-  $$('[data-add-dashboard]').forEach((button) => button.onclick = () => addProjectToDashboard(button.dataset.addDashboard));
   $$('[data-copy-site-profit]').forEach((button) => button.onclick = () => copySiteProfitTable(button.dataset.copySiteProfit).catch((error) => toast(error.message)));
   $$('[data-copy-listing]').forEach((button) => button.onclick = () => copyListingResult(button.dataset.projectId,button.dataset.copyListing).catch((error) => toast(error.message)));
   $$('[data-edit-commission]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editCommission,'commission'));
@@ -407,7 +365,7 @@ function openProductModal(projectId) {
   state.editingProjectImage = project.image_data || '';
   $('#productModalTitle').textContent = `编辑 · ${project.name}`;
   const form = $('#productForm');
-  for (const key of ['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit','owner_name','parent_asin','child_asin','sales_amount_cny','six_day_capacity']) formField(form,key).value = project[key] ?? '';
+  for (const key of ['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit']) formField(form,key).value = project[key] ?? '';
   const commission=commonProjectCommission(project);
   formField(form,'referral_rate_override').value=commission.value;
   formField(form,'referral_rate_override').placeholder=commission.mixed?'当前各站点不同；填写后统一':'留空使用父品类自动匹配';
@@ -422,8 +380,8 @@ async function saveProductForm(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const changes = {};
-  for (const key of ['name','dimension_unit','weight_unit','owner_name','parent_asin','child_asin']) changes[key] = formField(form,key).value.trim();
-  for (const key of ['cost_cny','length','width','height','weight','sales_amount_cny','six_day_capacity']) changes[key] = Number(formField(form,key).value) || 0;
+  for (const key of ['name','dimension_unit','weight_unit']) changes[key] = formField(form,key).value.trim();
+  for (const key of ['cost_cny','length','width','height','weight']) changes[key] = Number(formField(form,key).value) || 0;
   changes.image_data = state.editingProjectImage || '';
   if (!changes.name) return toast('请填写品名');
   try {

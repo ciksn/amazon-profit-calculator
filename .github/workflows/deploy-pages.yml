@@ -23,12 +23,24 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
+      # Pages is production: always publish the canonical main branch.
+      # This also prevents workflow_dispatch on a feature branch from
+      # temporarily replacing production until the next scheduled run.
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
       - name: Update Japan Customs tariff snapshot
         run: node scripts/update_japan_tariff.mjs
+      - name: Build current server UI for GitHub Pages
+        env:
+          MARGINGO_PAGES_API_BASE: ${{ vars.MARGINGO_PAGES_API_BASE || 'https://www.200392.xyz' }}
+        run: npm run build:pages
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

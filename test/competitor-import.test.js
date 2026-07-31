@@ -2,21 +2,73 @@
 
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const { detectFormat,parseRows }=require('../public/competitor-import');
+const {detectFormat,parseRows}=require('../public/competitor-import');
 
-test('识别并映射卖家精灵竞品字段',()=>{
-  const headers=['ASIN','商品标题','商品详情页链接','商品主图','月销量','月销售额($)','价格($)','评分','上架时间','配送方式','A+页面','视频介绍','类目路径','包装重量（单位换算）','包装尺寸（单位换算）'];
-  assert.equal(detectFormat(headers),'seller_sprite');
-  const [row]=parseRows(headers,[['B001','产品 A','https://amazon.com/dp/B001','https://img/a.jpg',123,4567,29.99,4.6,'2024-05-06','AMZ','Y','N','Home & Kitchen:Steamers','1.39 kg','33.27 x 20.07 x 14.22 cm']],{countryCode:'US',countryCnyPerLocal:7,usdCnyPerLocal:7});
-  const {source_row,...fields}=row;
-  assert.equal(source_row,2);assert.deepEqual(fields,{asin:'B001',name:'产品 A',product_url:'https://amazon.com/dp/B001',image_url:'https://img/a.jpg',sale_price:29.99,is_fba:true,has_aplus:true,has_video:false,listing_date:'2024-05-06',monthly_sales:123,monthly_revenue_local:4567,monthly_revenue_usd:4567,rating:4.6,category_text:'Home & Kitchen:Steamers',length:33.27,width:20.07,height:14.22,dimension_unit:'cm',weight:1.39,weight_unit:'kg',source_format:'seller_sprite'});
+test('H10 英寸和磅换算后按表单精度保存',()=>{
+  const headers=['图片 URL','URL','月销售额','ASIN','标题','价格','长度','宽度','高度','重量'];
+  const rows=[['https://example.com/a.jpg','https://amazon.com.au/dp/B0ROUND001','1000','B0ROUND001','测试商品','99',15.7988,24.790399999999,33.401,3.92]];
+  const [item]=parseRows(headers,rows,{countryCode:'AU',countryCnyPerLocal:4.7,usdCnyPerLocal:7.2});
+  assert.equal(item.length,40.13);assert.equal(item.width,62.97);assert.equal(item.height,84.84);assert.equal(item.weight,1.778);
 });
 
-test('识别 H10 字段并把当地销售额换算为美元',()=>{
-  const headers=['URL','图片 URL','ASIN','标题','配送方式','价格','月销量','月销售额','评论评分','年龄（月）','类目','长度','宽度','高度','重量'];
+test('H10 新版父级和 ASIN 指标表头可识别并优先使用 ASIN 数据',()=>{
+  const headers=['URL','图片 URL','ASIN','标题','价格','父级销量','ASIN 销量','父级收入','ASIN 收入','评论评分'];
+  const rows=[['https://amazon.ca/dp/B0NEWHEADER','https://example.com/new.jpg','B0NEWHEADER','新版表头商品',49.99,8583,406,358493.5,17490.61,4.2]];
   assert.equal(detectFormat(headers),'helium10');
-  const [row]=parseRows(headers,[['https://amazon.com.au/dp/B002','https://img/b.jpg','B002','产品 B','FBA',109.99,536,58954.64,'4.5',20,'Home',3.11,5.28,12.17,2.49]],{countryCode:'AU',countryCnyPerLocal:4.5,usdCnyPerLocal:7});
-  assert.equal(row.is_fba,true);assert.equal(row.has_aplus,null);assert.equal(row.has_video,null);assert.equal(row.listing_date,'约 20 个月');
-  assert.equal(row.category_text,'Home');assert.ok(Math.abs(row.length-7.8994)<1e-9);assert.ok(Math.abs(row.weight-1.129)<0.001);
-  assert.ok(Math.abs(row.monthly_revenue_usd-37899.4114)<0.01);
+  const [item]=parseRows(headers,rows,{countryCode:'CA',countryCnyPerLocal:5.2,usdCnyPerLocal:7.2});
+  assert.equal(item.monthly_sales,406);
+  assert.equal(item.monthly_revenue_local,17490.61);
+  assert.equal(item.monthly_revenue_usd,17490.61*5.2/7.2);
+});
+
+test('H10 只有父级指标时仍可兼容导入',()=>{
+  const headers=['URL','图片 URL','ASIN','标题','价格','父级销量','父级收入'];
+  const rows=[['https://amazon.de/dp/B0PARENTONLY','https://example.com/parent.jpg','B0PARENTONLY','父级指标商品',39.99,120,4798.8]];
+  assert.equal(detectFormat(headers),'helium10');
+  const [item]=parseRows(headers,rows,{countryCode:'DE',countryCnyPerLocal:8,usdCnyPerLocal:7.2});
+  assert.equal(item.monthly_sales,120);
+  assert.equal(item.monthly_revenue_local,4798.8);
+});
+
+test('日本站带日元符号的价格列可以正常识别',()=>{
+  const headers=['商品主图','商品详情页链接','ASIN','商品标题','价格(￥)','月销量','月销售额(￥)'];
+  const rows=[['https://example.com/jp.jpg','https://amazon.co.jp/dp/B0JPPRICE01','B0JPPRICE01','日本竞品','￥4,506',100,'￥450,600']];
+  const [item]=parseRows(headers,rows,{countryCode:'JP',countryCnyPerLocal:.05,usdCnyPerLocal:7.2});
+  assert.equal(detectFormat(headers),'seller_sprite');assert.equal(item.sale_price,4506);assert.equal(item.monthly_revenue_local,450600);
+});
+
+test('同款式统计需要的评价数量可以从两种导出表识别',()=>{
+  const sellerHeaders=['商品主图','商品详情页链接','ASIN','商品标题','价格','月销量','月销售额','评分','评价数量'];
+  const [seller]=parseRows(sellerHeaders,[['https://example.com/a.jpg','https://amazon.com/dp/B0REVIEWS01','B0REVIEWS01','商品',20,10,200,4.6,'1,234']],{countryCode:'US'});
+  assert.equal(seller.review_count,1234);
+  const h10Headers=['图片 URL','URL','ASIN','标题','价格','ASIN 销量','ASIN 收入','评论评分','评论数量'];
+  const [h10]=parseRows(h10Headers,[['https://example.com/b.jpg','https://amazon.com/dp/B0REVIEWS02','B0REVIEWS02','商品二',30,20,600,4.7,567]],{countryCode:'US'});
+  assert.equal(h10.review_count,567);
+});
+
+test('带空洞列的卖家精灵表头不会触发 Map 迭代错误',()=>{
+  const headers=[];headers[0]='ASIN';headers[5]='商品标题';headers[6]='商品详情页链接';headers[7]='商品主图';headers[16]='月销量';headers[19]='月销售额(CDN$)';headers[23]='价格(CDN$)';headers[27]='评分数';headers[29]='评分';headers[34]='上架时间';
+  const row=[];row[0]='B0SPARSE001';row[5]='稀疏表头商品';row[6]='https://amazon.ca/dp/B0SPARSE001';row[7]='https://example.com/sparse.jpg';row[16]=100;row[19]=1999;row[23]=19.99;row[27]=888;row[29]=4.6;row[34]='2026-01-01';
+  const [item]=parseRows(headers,[row],{countryCode:'CA',countryCnyPerLocal:5.2,usdCnyPerLocal:7.2});assert.equal(item.review_count,888);assert.equal(item.sale_price,19.99);
+});
+
+test('卖家精灵 A+ 页面和视频介绍按布尔可空语义解析',()=>{
+  const headers=['商品主图','商品详情页链接','ASIN','商品标题','价格','月销量','月销售额','A+页面','视频介绍'];
+  const rows=[
+    ['https://example.com/yes.jpg','https://amazon.com/dp/B0MEDIA001','B0MEDIA001','有媒体商品',20,10,200,'是','1'],
+    ['https://example.com/no.jpg','https://amazon.com/dp/B0MEDIA002','B0MEDIA002','无媒体商品',30,20,600,'否','0'],
+    ['https://example.com/unknown.jpg','https://amazon.com/dp/B0MEDIA003','B0MEDIA003','未知媒体商品',40,30,1200,'','']
+  ];
+  const [yes,no,unknown]=parseRows(headers,rows,{countryCode:'US'});
+  assert.equal(yes.has_aplus,true);assert.equal(yes.has_video,true);
+  assert.equal(no.has_aplus,false);assert.equal(no.has_video,false);
+  assert.equal(unknown.has_aplus,null);assert.equal(unknown.has_video,null);
+});
+
+test('H10 缺少 A+ 页面和视频介绍表头时保留 null',()=>{
+  const headers=['图片 URL','URL','ASIN','标题','价格','ASIN 销量','ASIN 收入'];
+  const rows=[['https://example.com/h10.jpg','https://amazon.com/dp/B0H10MEDIA','B0H10MEDIA','H10 商品',25,12,300]];
+  const [item]=parseRows(headers,rows,{countryCode:'US'});
+  assert.equal(item.has_aplus,null);
+  assert.equal(item.has_video,null);
 });

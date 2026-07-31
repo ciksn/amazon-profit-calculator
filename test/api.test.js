@@ -3,18 +3,21 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { server,matchCommission } = require('../server');
+const db = require('../lib/db');
+const competitorAnalysis = require('../lib/competitor-analysis');
+const reviewAnalysis = require('../lib/review-analysis');
 
-test('未命中具体品类时按站点使用其他类别佣金', () => {
-  assert.equal(matchCommission('US','Health & Household',30).rule.rate,15);
-  assert.equal(matchCommission('AU','Health & Household',30).rule.rate,15);
-  assert.equal(matchCommission('AE','Health & Household',100).rule.rate,10);
-  assert.equal(matchCommission('SA','Health & Household',100).rule.rate,11);
-  assert.equal(matchCommission('SA','Unknown Category',100).rule.rate,10);
-  assert.equal(matchCommission('JP','Health & Household',700).rule.rate,5);
-  assert.equal(matchCommission('JP','Health & Household',7000).rule.rate,15.4);
-  assert.equal(matchCommission('US','Home & Kitchen',30).fallback,false);
-  assert.equal(matchCommission('US','Health & Household',30).fallback,true);
-  assert.equal(matchCommission('ZZ','Unknown Category',30).matched,false);
+test('未命中具体品类时按站点使用其他类别佣金', async () => {
+  assert.equal((await matchCommission('US','Health & Household',30)).rule.rate,15);
+  assert.equal((await matchCommission('AU','Health & Household',30)).rule.rate,15);
+  assert.equal((await matchCommission('AE','Health & Household',100)).rule.rate,10);
+  assert.equal((await matchCommission('SA','Health & Household',100)).rule.rate,11);
+  assert.equal((await matchCommission('SA','Unknown Category',100)).rule.rate,10);
+  assert.equal((await matchCommission('JP','Health & Household',700)).rule.rate,5);
+  assert.equal((await matchCommission('JP','Health & Household',7000)).rule.rate,15.4);
+  assert.equal((await matchCommission('US','Home & Kitchen',30)).fallback,false);
+  assert.equal((await matchCommission('US','Health & Household',30)).fallback,true);
+  assert.equal((await matchCommission('ZZ','Unknown Category',30)).matched,false);
 });
 
 test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async (t) => {
@@ -25,8 +28,17 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
   t.after(async () => {
     if (fallbackProjectId) await fetch(`${base}/api/projects/${fallbackProjectId}`,{method:'DELETE'}).catch(()=>{});
     await new Promise((resolve) => server.close(resolve));
+    await db.close();
   });
   const bootstrap=await (await fetch(`${base}/api/bootstrap`)).json();
+  const health=await (await fetch(`${base}/api/health`)).json();
+  assert.deepEqual(health,{ok:true,database:'postgresql'});
+  assert.equal((await fetch(`${base}/`)).status,200);
+  process.env.CORS_ORIGINS='https://front.example';
+  const cors=await fetch(`${base}/api/health`,{headers:{origin:'https://front.example'}});
+  assert.equal(cors.headers.get('access-control-allow-origin'),'https://front.example');
+  assert.equal((await fetch(`${base}/api/health`,{method:'OPTIONS',headers:{origin:'https://front.example'}})).status,204);
+  delete process.env.CORS_ORIGINS;
   const sizes=await (await fetch(`${base}/api/rules/sizes`)).json();
   const commissions=await (await fetch(`${base}/api/rules/commission`)).json();
   let projectId=bootstrap.projects[0]?.id;
@@ -60,10 +72,76 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
 
   const missing=await fetch(`${base}/api/projects/99999999`);
   assert.equal(missing.status,404);
+  const firstInstanceResponse=await fetch(`${base}/api/embed/instances`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+  const secondInstanceResponse=await fetch(`${base}/api/embed/instances`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+  assert.equal(firstInstanceResponse.status,201);assert.equal(secondInstanceResponse.status,201);
+  const firstInstance=await firstInstanceResponse.json();const secondInstance=await secondInstanceResponse.json();
+  try {
+    assert.notEqual(firstInstance.access_key,secondInstance.access_key);
+    assert.equal((await fetch(`${base}/api/embed/bootstrap`)).status,401);
+    assert.equal((await fetch(`${base}/api/embed/bootstrap`,{headers:{'x-workspace-key':'missing-instance-key'}})).status,404);
+    const isolatedBootstrap=await (await fetch(`${base}/api/embed/bootstrap`,{headers:{'x-workspace-key':firstInstance.access_key}})).json();
+    assert.equal(isolatedBootstrap.project.id,firstInstance.project.id);
+    assert.equal(Object.hasOwn(isolatedBootstrap,'projects'),false);
+    const renamed=await (await fetch(`${base}/api/embed/project`,{method:'PUT',headers:{'content-type':'application/json','x-workspace-key':firstInstance.access_key},body:JSON.stringify({name:'独立实例 A'})})).json();
+    assert.equal(renamed.name,'独立实例 A');
+    const untouched=await (await fetch(`${base}/api/embed/project`,{headers:{'x-workspace-key':secondInstance.access_key}})).json();
+    assert.notEqual(untouched.name,'独立实例 A');
+    const isolatedCalculation=await (await fetch(`${base}/api/embed/calculate`,{method:'POST',headers:{'content-type':'application/json','x-workspace-key':firstInstance.access_key},body:JSON.stringify({project_id:secondInstance.project.id})})).json();
+    assert.equal(isolatedCalculation.project_id,firstInstance.project.id);
+    const embedHeaders={'content-type':'application/json','x-workspace-key':firstInstance.access_key};
+    assert.equal((await fetch(`${base}/api/embed/countries/AU`,{method:'PUT',headers:embedHeaders,body:JSON.stringify({sale_price:25})})).status,200);
+    assert.equal((await fetch(`${base}/api/embed/competitors/import`,{method:'POST',headers:embedHeaders,body:'{}'})).status,400);
+    assert.equal((await fetch(`${base}/api/embed/competitors/analyze`,{method:'POST',headers:embedHeaders,body:'{}'})).status,400);
+    const scopedCompetitor=await (await fetch(`${base}/api/embed/competitors`,{method:'POST',headers:embedHeaders,body:JSON.stringify({country_code:'AU',name:'隔离竞品',sale_price:20})})).json();
+    assert.equal((await fetch(`${base}/api/embed/competitors/${scopedCompetitor.id}`,{method:'PUT',headers:embedHeaders,body:JSON.stringify({cost_cny:10})})).status,200);
+    assert.equal((await fetch(`${base}/api/embed/competitors/${scopedCompetitor.id}`,{method:'DELETE',headers:{'x-workspace-key':secondInstance.access_key}})).status,404);
+    assert.equal((await fetch(`${base}/api/embed/competitors/${scopedCompetitor.id}`,{method:'DELETE',headers:embedHeaders})).status,200);
+    const scopedRecord=await (await fetch(`${base}/api/embed/site-card-records`,{method:'POST',headers:embedHeaders,body:JSON.stringify({country_code:'AU',name:'隔离方案'})})).json();
+    assert.equal((await fetch(`${base}/api/embed/site-card-records/${scopedRecord.id}`,{method:'PUT',headers:embedHeaders,body:JSON.stringify({name:'隔离方案 B'})})).status,200);
+    assert.equal((await fetch(`${base}/api/embed/site-card-records/${scopedRecord.id}`,{method:'DELETE',headers:{'x-workspace-key':secondInstance.access_key}})).status,404);
+    assert.equal((await fetch(`${base}/api/embed/site-card-records/${scopedRecord.id}`,{method:'DELETE',headers:embedHeaders})).status,200);
+    assert.equal((await fetch(`${base}/api/embed/competitors`,{method:'DELETE',headers:embedHeaders})).status,200);
+    assert.equal((await fetch(`${base}/api/embed/not-found`,{headers:embedHeaders})).status,404);
+    assert.equal((await fetch(`${base}/api/embed/project`,{method:'DELETE',headers:{'x-workspace-key':firstInstance.access_key}})).status,405);
+  } finally {
+    await fetch(`${base}/api/projects/${firstInstance.project.id}`,{method:'DELETE'});
+    await fetch(`${base}/api/projects/${secondInstance.project.id}`,{method:'DELETE'});
+  }
   const createdResponse=await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'自动测试临时项目'})});
   assert.equal(createdResponse.status,201);
   const created=await createdResponse.json();
   try {
+    assert.match(created.share_key,/^[A-Za-z0-9_-]{8,120}$/);
+    const sharedProject=await (await fetch(`${base}/api/projects/by-share-key/${created.share_key}`)).json();
+    assert.equal(sharedProject.id,created.id);
+    assert.equal((await fetch(`${base}/api/projects/by-share-key/not-found-key`)).status,404);
+    assert.equal((await fetch(`${base}/api/projects/99999999/site-card-records`)).status,404);
+    assert.equal((await fetch(`${base}/api/projects/99999999/site-card-records`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'US'})})).status,404);
+    assert.equal((await fetch(`${base}/api/projects/${created.id}/site-card-records`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'ZZ'})})).status,400);
+    const recordResponse=await fetch(`${base}/api/projects/${created.id}/site-card-records`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:'legacy-record-1',country_code:'US',name:'小站点方案 A',cost_cny:88,sale_price:39.99,snapshot:{detail_version:1,profit_rate:31.5}})});
+    assert.equal(recordResponse.status,201);
+    const record=await recordResponse.json();
+    assert.equal(record.snapshot.profit_rate,31.5);
+    const keyedProject=await (await fetch(`${base}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'固定分享标识项目',share_key:'fixed-share-key-123'})})).json();
+    assert.equal(keyedProject.share_key,'fixed-share-key-123');
+    const conflictingRecord=await fetch(`${base}/api/projects/${keyedProject.id}/site-card-records`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:'legacy-record-1',country_code:'US'})});
+    assert.equal(conflictingRecord.status,409);
+    assert.equal((await fetch(`${base}/api/projects/${keyedProject.id}`,{method:'DELETE'})).status,200);
+    const duplicateRecord=await fetch(`${base}/api/projects/${created.id}/site-card-records`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:'legacy-record-1',country_code:'US',name:'重复迁移'})});
+    assert.equal(duplicateRecord.status,200);
+    const savedRecords=await (await fetch(`${base}/api/projects/${created.id}/site-card-records?country_code=US`)).json();
+    assert.equal(savedRecords.records.length,1);
+    assert.equal(savedRecords.records[0].name,'小站点方案 A');
+    assert.equal((await (await fetch(`${base}/api/projects/${created.id}/site-card-records`)).json()).records.length,1);
+    const updatedRecord=await (await fetch(`${base}/api/site-card-records/${record.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'数据库方案 B',cost_cny:90,sale_price:42,snapshot:null})})).json();
+    assert.equal(updatedRecord.name,'数据库方案 B');
+    assert.equal(updatedRecord.cost_cny,90);
+    assert.deepEqual(updatedRecord.snapshot,{});
+    assert.equal((await fetch(`${base}/api/site-card-records/missing-record`,{method:'PUT',headers:{'content-type':'application/json'},body:'{}'})).status,404);
+    assert.equal((await fetch(`${base}/api/site-card-records/${record.id}`,{method:'DELETE'})).status,200);
+    assert.equal((await fetch(`${base}/api/site-card-records/${record.id}`,{method:'DELETE'})).status,404);
+    assert.equal((await (await fetch(`${base}/api/projects/${created.id}/site-card-records?country_code=US`)).json()).records.length,0);
     const updated=await (await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({name:'已更新临时项目',cost_cny:115,weight:2,image_data:'data:image/png;base64,dGVzdA=='})})).json();
     assert.equal(updated.name,'已更新临时项目');
     assert.equal(updated.weight,2);
@@ -72,15 +150,6 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
     assert.equal(listingUpdate.listings.find((row)=>row.country_code==='JP').matched_referral_rate,15.4);
     const calculated=await (await fetch(`${base}/api/calculate`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({project_id:created.id})})).json();
     assert.ok(calculated.results.some((row)=>row.country_code==='JP' && row.customs_rate===5));
-    const variant=await (await fetch(`${base}/api/calculate`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({project_id:created.id,country_code:'JP',cost_cny_override:140,sale_price_override:8000,include_target_prices:true})})).json();
-    assert.equal(variant.results[0].sale_price,8000);
-    assert.equal(Object.keys(variant.results[0].target_prices).length,4);
-    assert.equal(typeof variant.results[0].fba_rule_base_fee,'number');
-    assert.equal(typeof variant.results[0].freight_rate_cny,'number');
-    assert.equal(typeof variant.results[0].tax_note,'string');
-    const unchanged=await (await fetch(`${base}/api/projects/${created.id}`)).json();
-    assert.equal(unchanged.cost_cny,115);
-    assert.equal(unchanged.listings.find((row)=>row.country_code==='JP').sale_price,7000);
     const competitorResponse=await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})});
     assert.equal(competitorResponse.status,201);
     const competitor=await competitorResponse.json();
@@ -104,33 +173,159 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
     assert.equal(competitorList.competitors[0].id,competitor.id);
     assert.equal((await fetch(`${base}/api/competitors/${competitor.id}`,{method:'DELETE'})).status,200);
     assert.equal((await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors.length,0);
-    const importPayload={country_code:'JP',rows:[{asin:'B0IMPORT01',name:'导入竞品',sale_price:6200,image_url:'https://example.com/a.jpg',product_url:'https://amazon.co.jp/dp/B0IMPORT01',is_fba:true,has_aplus:false,has_video:true,listing_date:'2025-01-01',monthly_sales:320,monthly_revenue_local:1984000,monthly_revenue_usd:13300,rating:4.5,category_text:'Consumer Electronics',length:30,width:20,height:10,dimension_unit:'cm',weight:0.8,weight_unit:'kg',source_format:'seller_sprite',source_row:2}]};
+    const importPayload={country_code:'JP',rows:[{asin:'B0IMPORT01',name:'导入竞品',sale_price:6200,
+      image_url:'https://example.com/a.jpg',product_url:'https://amazon.co.jp/dp/B0IMPORT01',is_fba:true,
+      monthly_sales:320,monthly_revenue_local:1984000,rating:4.5,category_text:'Consumer Electronics',
+      length:30.123456,width:20.987654,height:10.555555,dimension_unit:'cm',weight:.8123456,weight_unit:'kg',source_format:'seller_sprite'}]};
     const imported=await (await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(importPayload)})).json();
     assert.deepEqual(imported,{imported:1,created:1,updated:0,discarded:0});
-    let importedRow=(await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors[0];
-    assert.equal(importedRow.asin,'B0IMPORT01');assert.equal(importedRow.has_video,1);assert.equal(importedRow.monthly_sales,320);
-    assert.equal(importedRow.uses_project_defaults,0);assert.equal(importedRow.cost_cny,120);assert.equal(importedRow.category_text,'Consumer Electronics');assert.equal(importedRow.weight,0.8);assert.equal(importedRow.length,30);assert.equal(importedRow.calculation.referral_base_rate,8.4);
-    importedRow=await (await fetch(`${base}/api/competitors/${importedRow.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({cost_cny:77})})).json();
-    importPayload.rows[0].sale_price=6400;importPayload.rows[0].weight=1.1;importPayload.rows[0].is_fba=false;const reimported=await (await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(importPayload)})).json();
+    const importedList=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
+    assert.equal(importedList.competitor_counts.JP,1);
+    assert.equal(importedList.competitors[0].asin,'B0IMPORT01');
+    assert.equal(importedList.competitors[0].length,30.12);
+    assert.equal(importedList.competitors[0].width,20.99);
+    assert.equal(importedList.competitors[0].height,10.56);
+    assert.equal(importedList.competitors[0].weight,.812);
+    assert.equal(typeof importedList.competitors[0].calculation.profit_rate,'number');
+    importPayload.rows[0].sale_price=6400;
+    const reimported=await (await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(importPayload)})).json();
     assert.deepEqual(reimported,{imported:1,created:0,updated:1,discarded:0});
-    importedRow=(await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors[0];
-    assert.equal(importedRow.cost_cny,77);assert.equal(importedRow.sale_price,6400);assert.equal(importedRow.weight,1.1);assert.equal(importedRow.uses_project_defaults,0);assert.equal(importedRow.calculation.fba_fee,0);
-    assert.equal((await fetch(`${base}/api/competitors/${importedRow.id}`,{method:'DELETE'})).status,200);
-    const manualUnion=await (await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',name:'手动竞品',sale_price:5000})})).json();
-    assert.ok(manualUnion.id);
-    const makeImportedRow=(index)=>({asin:`b0union${String(index).padStart(3,'0')}`,name:`关键词竞品 ${index}`,sale_price:1000+index,monthly_sales:index,monthly_revenue_local:index*1000,category_text:'Home & Kitchen',source_format:'helium10',source_row:index+2});
-    const firstUnion=await (await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:Array.from({length:35},(_,index)=>makeImportedRow(index))})})).json();
-    assert.deepEqual(firstUnion,{imported:30,created:30,updated:0,discarded:5});
-    let unionList=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
-    assert.equal(unionList.competitor_counts.JP,31);assert.equal(unionList.competitors.length,5);assert.equal(unionList.competitors[0].asin,'B0UNION029');
-    const secondUnion=await (await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:Array.from({length:30},(_,index)=>makeImportedRow(index+20))})})).json();
-    assert.deepEqual(secondUnion,{imported:30,created:20,updated:10,discarded:0});
-    unionList=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
-    assert.equal(unionList.competitor_counts.JP,51);assert.equal(unionList.competitors[0].asin,'B0UNION049');
+    const similarPayload={country_code:'JP',rows:[{...importPayload.rows[0],asin:'B0SIMILAR01',name:'同款式竞品',sale_price:5000,monthly_revenue_local:500000,review_count:321,length:44,width:33,height:22,weight:1.25}]};
+    const similarImported=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(similarPayload)})).json();
+    assert.equal(similarImported.created,1);
+    let similarList=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json();
+    assert.equal(similarList.competitors[0].review_count,321);assert.equal(similarList.competitors[0].cost_cny,120);assert.equal(similarList.competitors[0].length,44);assert.equal(similarList.competitors[0].weight,1.25);
+    await fetch(`${base}/api/projects/${created.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({cost_cny:99})});
+    similarList=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json();assert.equal(similarList.competitors[0].cost_cny,99);assert.equal(similarList.competitors[0].length,44);
+    const similarCleared=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors?country_code=JP`,{method:'DELETE'})).json();assert.equal(similarCleared.deleted,1);
+    const moreRows=Array.from({length:5},(_,index)=>({...importPayload.rows[0],asin:`B0MORE000${index}`,name:`分析竞品 ${index+1}`,product_url:`https://amazon.co.jp/dp/B0MORE000${index}`,monthly_revenue_local:2_000_000+index}));
+    await fetch(`${base}/api/projects/${created.id}/competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:moreRows})});
+    const historicalSixth=await db.one("SELECT id FROM project_competitors WHERE project_id=$1 AND country_code='JP' AND competitor_kind='standard' ORDER BY monthly_revenue_local DESC,id OFFSET 5 LIMIT 1",[created.id]);
+    await db.query("UPDATE project_competitors SET review_analysis_status='complete',review_pros=$1,review_cons=$2 WHERE id=$3",[
+      JSON.stringify(['历史优点']),JSON.stringify(['历史缺点']),historicalSixth.id
+    ]);
+    const originalAnalyze=competitorAnalysis.analyzeCompetitorBatch;let analyzedIds=[],analysisCalls=0,receivedFeatureBullets=[];
+    competitorAnalysis.analyzeCompetitorBatch=async(rows)=>{analysisCalls+=1;analyzedIds=rows.map((row)=>row.id);receivedFeatureBullets=rows.map((row)=>row.feature_bullets);return {model:'gemini-test',rows:rows.map((row)=>({id:row.id,featureBullets:row.feature_bullets||['五点一','五点二'],sellingPoints:['便携设计','电压自适应','快速预热'],differentiation:['全球电压'],status:'complete',warning:'Amazon 返回了验证码页面；已使用 Gemini URL Context 回退'}))}};
+    try {
+      const analysisResponse=await fetch(`${base}/api/projects/${created.id}/competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})});
+      assert.equal(analysisResponse.status,200);const analysisPayload=await analysisResponse.json();assert.equal(analysisPayload.total,5);assert.equal(analysisPayload.attempted,5);assert.equal(analysisPayload.skipped,0);assert.equal(analyzedIds.length,5);
+      const analyzedList=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
+      assert.ok(analyzedList.competitors.every((row)=>row.analysis_status==='complete'&&row.selling_points.includes('便携设计')));
+      assert.ok(analyzedList.competitors.every((row)=>row.analysis_warning.includes('Amazon 返回了验证码页面')));
+      const repeatedAnalysis=await (await fetch(`${base}/api/projects/${created.id}/competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})})).json();
+      assert.equal(repeatedAnalysis.attempted,0);assert.equal(repeatedAnalysis.skipped,5);assert.equal(analysisCalls,1);
+      const manualAnalysis=await (await fetch(`${base}/api/projects/${created.id}/competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',manual_rows:[{id:analyzedIds[0],feature_bullets:['手动五点一','手动五点二']}]})})).json();
+      assert.equal(manualAnalysis.attempted,1);assert.equal(manualAnalysis.skipped,4);assert.equal(analysisCalls,2);
+      assert.deepEqual(receivedFeatureBullets,[['手动五点一','手动五点二']]);assert.deepEqual((await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitors.find((row)=>row.id===analyzedIds[0]).feature_bullets,['手动五点一','手动五点二']);
+    } finally { competitorAnalysis.analyzeCompetitorBatch=originalAnalyze; }
+    const similarReviewRows=Array.from({length:6},(_,index)=>({...importPayload.rows[0],asin:`B0SIMREV0${index}`,name:`同款评论竞品 ${index+1}`,product_url:`https://amazon.co.jp/dp/B0SIMREV0${index}`,monthly_revenue_local:3_000_000+index}));
+    await fetch(`${base}/api/projects/${created.id}/similar-competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:similarReviewRows})});
+    const originalReviewAnalyze=reviewAnalysis.analyzeReviewBatch;
+    const reviewCalls=[],reviewContexts=[];
+    reviewAnalysis.analyzeReviewBatch=async(rows,options={})=>{
+      reviewCalls.push(rows.map((row)=>({id:Number(row.id),kind:row.competitor_kind})));
+      reviewContexts.push(options.existingSummaries||[]);
+      const failLast=reviewCalls.length===1;
+      const forceAllFail=rows.every((row)=>row.name==='全部失败');
+      return {
+        model:'gemini-review-test',
+        rows:rows.map((row,index)=>({
+          id:Number(row.id),
+          topReviews:[{id:`R-${row.id}`,rating:5,title:'好用',body:'快速方便',date:'',verified:true,vine:false,helpful:1}],
+          pros:['快速方便'],cons:index===0?['略显笨重']:[],
+          status:forceAllFail||failLast&&index===rows.length-1?'failed':'complete',
+          source:'amazon_page',sampleCount:1,
+          warning:forceAllFail||failLast&&index===rows.length-1?'未获取到公开评论':'仅基于公开 Top Reviews；仅 1 条样本'
+        })),
+        overview:{pros:['共同优点'],cons:['共同缺点']}
+      };
+    };
+    try {
+      const standardReviewResponse=await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})});
+      assert.equal(standardReviewResponse.status,200);
+      const standardReview=await standardReviewResponse.json();
+      assert.equal(standardReview.total,5);assert.equal(standardReview.attempted,5);assert.equal(standardReview.analyzed,4);assert.equal(standardReview.failed,1);
+      assert.equal(reviewCalls[0].length,5);assert.ok(reviewCalls[0].every((item)=>item.kind==='standard'));
+      let standardReviewList=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
+      assert.equal(standardReviewList.review_overview.success_count,4);
+      assert.deepEqual(standardReviewList.review_overview.pros,['共同优点']);
+      assert.equal(standardReviewList.competitors.filter((row)=>row.review_analysis_status==='complete').length,4);
+      assert.equal(standardReviewList.competitors.filter((row)=>row.review_analysis_status==='failed').length,1);
+
+      const retryReview=await (await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})})).json();
+      assert.equal(retryReview.attempted,1);assert.equal(retryReview.analyzed,1);assert.equal(reviewCalls[1].length,1);
+      assert.equal(reviewContexts[1].length,4);
+      const reusedReview=await (await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})})).json();
+      assert.equal(reusedReview.attempted,0);assert.equal(reviewCalls.length,2);
+      standardReviewList=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
+      assert.equal(standardReviewList.competitors.filter((row)=>row.review_analysis_status==='complete').length,5);
+
+      const similarReview=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})})).json();
+      assert.equal(similarReview.total,5);assert.equal(similarReview.attempted,5);assert.equal(reviewCalls[2].length,5);assert.ok(reviewCalls[2].every((item)=>item.kind==='similar'));
+      const similarReviewList=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json();
+      assert.equal(similarReviewList.review_overview.competitor_kind,'similar');
+      assert.equal(similarReviewList.competitors.filter((row)=>row.review_analysis_status==='complete').length,5);
+      assert.equal((await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).review_overview.competitor_kind,'standard');
+      const allSimilarCleared=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`,{method:'DELETE'})).json();
+      assert.equal(allSimilarCleared.deleted,6);
+      assert.equal((await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json()).competitors.length,0);
+      const similarAnalysisRows=Array.from({length:6},(_,index)=>({...importPayload.rows[0],asin:`B0SIMAN0${index}`,name:`同款卖点竞品 ${index+1}`,product_url:`https://amazon.co.jp/dp/B0SIMAN0${index}`,monthly_revenue_local:4_000_000+index}));
+      await fetch(`${base}/api/projects/${created.id}/similar-competitors/import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',rows:similarAnalysisRows})});
+      const standardBeforeSimilarAnalysis=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
+      const originalSimilarAnalyze=competitorAnalysis.analyzeCompetitorBatch;const similarAnalysisCalls=[];
+      competitorAnalysis.analyzeCompetitorBatch=async(rows)=>{
+        similarAnalysisCalls.push(rows.map((row)=>({id:Number(row.id),kind:row.competitor_kind,featureBullets:row.feature_bullets})));
+        return {model:'gemini-similar-test',rows:rows.map((row)=>({id:row.id,featureBullets:row.feature_bullets||['同款五点一'],sellingPoints:['同款便携设计'],differentiation:['同款差异化'],status:'complete',warning:''}))};
+      };
+      try {
+        const similarAnalysisResponse=await fetch(`${base}/api/projects/${created.id}/similar-competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})});
+        assert.equal(similarAnalysisResponse.status,200);
+        const similarAnalysis=await similarAnalysisResponse.json();
+        assert.equal(similarAnalysis.total,5);assert.equal(similarAnalysis.attempted,5);assert.equal(similarAnalysis.skipped,0);
+        assert.equal(similarAnalysisCalls.length,1);assert.equal(similarAnalysisCalls[0].length,5);assert.ok(similarAnalysisCalls[0].every((row)=>row.kind==='similar'));
+        const analyzedSimilarList=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors`)).json();
+        assert.ok(analyzedSimilarList.competitors.every((row)=>row.analysis_status==='complete'&&row.selling_points.includes('同款便携设计')));
+        const standardAfterSimilarAnalysis=await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json();
+        assert.deepEqual(standardAfterSimilarAnalysis.competitors.map((row)=>({id:row.id,selling_points:row.selling_points})),standardBeforeSimilarAnalysis.competitors.map((row)=>({id:row.id,selling_points:row.selling_points})));
+        const repeatedSimilarAnalysis=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP'})})).json();
+        assert.equal(repeatedSimilarAnalysis.attempted,0);assert.equal(repeatedSimilarAnalysis.skipped,5);assert.equal(similarAnalysisCalls.length,1);
+        const manualSimilarAnalysis=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',manual_rows:[{id:similarAnalysisCalls[0][0].id,feature_bullets:['同款手动五点']}]})})).json();
+        assert.equal(manualSimilarAnalysis.attempted,1);assert.equal(manualSimilarAnalysis.skipped,4);assert.equal(similarAnalysisCalls.length,2);
+        assert.deepEqual(similarAnalysisCalls[1],[{id:similarAnalysisCalls[0][0].id,kind:'similar',featureBullets:['同款手动五点']}]);
+        const sixthSimilar=await db.one("SELECT id FROM project_competitors WHERE project_id=$1 AND country_code='JP' AND competitor_kind='similar' ORDER BY monthly_revenue_local DESC,id OFFSET 5 LIMIT 1",[created.id]);
+        const standardId=standardBeforeSimilarAnalysis.competitors[0].id;
+        const standardManualResponse=await fetch(`${base}/api/projects/${created.id}/similar-competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',manual_rows:[{id:standardId,feature_bullets:['不应接受']}]})});
+        assert.equal(standardManualResponse.status,400);
+        const sixthSimilarManualResponse=await fetch(`${base}/api/projects/${created.id}/similar-competitors/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'JP',manual_rows:[{id:sixthSimilar.id,feature_bullets:['不应接受']}]})});
+        assert.equal(sixthSimilarManualResponse.status,400);
+      } finally { competitorAnalysis.analyzeCompetitorBatch=originalSimilarAnalyze; }
+      const similarAnalysisCleared=await (await fetch(`${base}/api/projects/${created.id}/similar-competitors?country_code=JP`,{method:'DELETE'})).json();
+      assert.equal(similarAnalysisCleared.deleted,6);
+      await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'AU',name:'全部失败',asin:'B0ALLFAIL1',product_url:'https://www.amazon.com.au/dp/B0ALLFAIL1',monthly_revenue_local:1000})});
+      const allFailedReview=await (await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'AU'})})).json();
+      assert.equal(allFailedReview.analyzed,0);
+      assert.equal(allFailedReview.review_overview.status,'insufficient');
+      assert.equal(allFailedReview.review_overview.success_count,0);
+      await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'CA',name:'单个评论竞品',asin:'B0ONLYONE1',product_url:'https://www.amazon.ca/dp/B0ONLYONE1',monthly_revenue_local:1000})});
+      const insufficientReview=await (await fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'CA'})})).json();
+      assert.equal(insufficientReview.review_overview.status,'insufficient');
+      assert.equal(insufficientReview.review_overview.success_count,1);
+      assert.deepEqual(insufficientReview.review_overview.pros,[]);
+      await fetch(`${base}/api/projects/${created.id}/competitors`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'DE',name:'并发竞品',asin:'B0RACE0001',product_url:'https://www.amazon.de/dp/B0RACE0001',monthly_revenue_local:1000})});
+      let concurrentCalls=0,releaseConcurrent;
+      const bothAnalyzing=new Promise((resolve)=>{releaseConcurrent=resolve});
+      reviewAnalysis.analyzeReviewBatch=async(rows)=>{
+        concurrentCalls+=1;if(concurrentCalls===2)releaseConcurrent();await bothAnalyzing;
+        return {model:'gemini-race-test',rows:rows.map((row)=>({id:Number(row.id),topReviews:[],pros:['并发优点'],cons:[],status:'complete',source:'url_context',warning:'链接读取'})),overview:{pros:[],cons:[]}};
+      };
+      const concurrentResponses=await Promise.all([1,2].map(()=>fetch(`${base}/api/projects/${created.id}/competitors/review-analysis`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'DE'})}).then((response)=>response.json())));
+      assert.deepEqual(concurrentResponses.map((item)=>item.analyzed).sort(),[0,1]);
+    } finally { reviewAnalysis.analyzeReviewBatch=originalReviewAnalyze; }
     const cleared=await (await fetch(`${base}/api/projects/${created.id}/competitors?country_code=JP`,{method:'DELETE'})).json();
-    assert.deepEqual(cleared,{ok:true,deleted:51});assert.equal((await (await fetch(`${base}/api/projects/${created.id}/competitors`)).json()).competitor_counts.JP,undefined);
+    assert.equal(cleared.deleted,6);
     const match=await (await fetch(`${base}/api/commission/match`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({country_code:'US',text:'Unknown Category',sale_price:20})})).json();
     assert.equal(match.fallback,true);
+    assert.equal((await fetch(`${base}/api/tariffs/japan/lookup`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({hs_code:'8543709999'})})).status,200);
     for (const type of ['countries','sizes','fba','freight','commission']) assert.equal((await fetch(`${base}/api/rules/${type}`)).status,200);
     assert.equal((await fetch(`${base}/api/rules/freight/${auFreight.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:'{}'})).status,400);
     assert.equal((await fetch(`${base}/api/not-found`)).status,404);

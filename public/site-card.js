@@ -1,6 +1,6 @@
 'use strict';
 
-const state={bootstrap:null,project:null,country:null,listing:null,result:null,records:[],recordResults:new Map(),recordTimers:new Map(),recordRequestVersions:new Map(),saving:0,pending:Promise.resolve(),reloadTimer:null};
+const state={bootstrap:null,project:null,country:null,listing:null,result:null,records:[],recordResults:new Map(),recordTimers:new Map(),recordRequestVersions:new Map(),shareKey:'',saving:0,pending:Promise.resolve(),reloadTimer:null};
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
@@ -9,34 +9,56 @@ const escapeHtml=(value)=>String(value??'').replace(/[&<>"']/g,(char)=>({'&':'&a
 const number=(value,digits=2)=>Number(value||0).toLocaleString('zh-CN',{maximumFractionDigits:digits});
 const marketCode=(code)=>code==='GB'?'UK':code;
 const field=(name)=>$(`[name="${name}"]`);
-const recordStorageKey='margingo-site-card-records-v1';
+const legacyRecordStorageKey='margingo-site-card-records-v1';
 
 async function api(url,options={}){
-  const target=/^https?:\/\//i.test(url)?url:`${apiBase}${url}`;
-  const response=await fetch(target,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});
+  const scoped=state.shareKey?url
+    .replace(/^\/api\/projects\/\d+\/site-card-records/,'/api/embed/site-card-records')
+    .replace(/^\/api\/site-card-records\//,'/api/embed/site-card-records/')
+    .replace(/^\/api\/projects\/\d+\/countries\//,'/api/embed/countries/')
+    .replace(/^\/api\/projects\/\d+$/,'/api/embed/project')
+    .replace(/^\/api\/calculate$/,'/api/embed/calculate'):url;
+  const target=/^https?:\/\//i.test(scoped)?scoped:`${apiBase}${scoped}`;
+  const workspaceHeader=state.shareKey&&scoped.startsWith('/api/embed/')?{'X-Workspace-Key':state.shareKey}:{};
+  const response=await fetch(target,{headers:{'Content-Type':'application/json',...workspaceHeader,...(options.headers||{})},...options});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok)throw new Error(payload.error||'请求失败');
   return payload;
 }
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(el.timer);el.timer=setTimeout(()=>el.classList.remove('show'),2200)}
 function saving(start,error=false){state.saving=Math.max(0,state.saving+(start?1:-1));const el=$('#saveState');el.textContent=error?'保存失败':state.saving?'保存中…':'已保存';el.className=`save-state ${error?'error':state.saving?'saving':''}`}
-function announceSync(){const message={projectId:state.project?.id,countryCode:state.country?.code,source:'site-card',at:Date.now()};syncChannel?.postMessage(message);try{localStorage.setItem('margingo-sync-pulse',JSON.stringify(message))}catch{}}
-function updateLinks(){history.replaceState(null,'',`?project=${state.project.id}&country=${state.country.code}`)}
-function loadRecords(){try{const value=JSON.parse(localStorage.getItem(recordStorageKey));return Array.isArray(value)?value:[]}catch{return []}}
-function saveRecords(){try{localStorage.setItem(recordStorageKey,JSON.stringify(state.records))}catch{toast('记录保存失败，请检查浏览器存储权限')}}
-function visibleRecords(){return state.records.filter((item)=>Number(item.project_id)===Number(state.project.id)&&item.country_code===state.country.code)}
+function announceSync(){syncChannel?.postMessage({projectId:state.project?.id,countryCode:state.country?.code,source:'site-card',at:Date.now()})}
+function updateLinks(){
+  if(state.shareKey)return history.replaceState(null,'',`#${new URLSearchParams({key:state.shareKey,country:state.country.code})}`);
+  history.replaceState(null,'',`?project=${state.project.id}&country=${state.country.code}`);
+}
+async function loadRecords(){const payload=await api(`/api/projects/${state.project.id}/site-card-records?country_code=${encodeURIComponent(state.country.code)}`);state.records=payload.records||[];return state.records}
+function visibleRecords(){return state.records}
+async function migrateLegacyRecords(){
+  let records=[];try{records=JSON.parse(localStorage.getItem(legacyRecordStorageKey)||'[]')}catch{}
+  if(!Array.isArray(records)||!records.length)return;
+  const failures=[];
+  for(const record of records){
+    if(!record||!record.project_id||!record.country_code)continue;
+    try{await api(`/api/projects/${Number(record.project_id)}/site-card-records`,{method:'POST',body:JSON.stringify({id:record.id,country_code:record.country_code,name:record.name,cost_cny:Number(record.cost_cny??record.snapshot?.cost_cny)||0,sale_price:Number(record.sale_price??record.snapshot?.sale_price)||0,snapshot:record.snapshot||{}})})}
+    catch(error){if(!/品类不存在/.test(error.message))failures.push(error)}
+  }
+  if(!failures.length){try{localStorage.removeItem(legacyRecordStorageKey)}catch{}}
+  else toast(`有 ${failures.length} 条旧方案迁移失败，请刷新后重试`);
+}
 
 async function initialize(){
-  state.records=loadRecords();
-  state.bootstrap=await api('/api/bootstrap');
-  if(!state.bootstrap.projects.length)state.project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:'新品测算 01'})});
+  const hashParams=new URLSearchParams(location.hash.replace(/^#/,''));state.shareKey=hashParams.get('key')||'';
+  if(state.shareKey){
+    state.bootstrap=await api('/api/embed/bootstrap');state.project=state.bootstrap.project;
+  }else state.bootstrap=await api('/api/bootstrap');
+  if(!state.shareKey&&!state.bootstrap.projects.length)state.project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:'新品测算 01'})});
   const params=new URLSearchParams(location.search);const requestedProject=Number(params.get('project'));
-  const projectId=state.bootstrap.projects.some((item)=>Number(item.id)===requestedProject)?requestedProject:(state.project?.id||state.bootstrap.projects[0]?.id);
-  state.project=await api(`/api/projects/${projectId}`);
-  const requestedCountry=String(params.get('country')||'').toUpperCase();
+  if(!state.shareKey){const projectId=state.bootstrap.projects.some((item)=>Number(item.id)===requestedProject)?requestedProject:(state.project?.id||state.bootstrap.projects[0]?.id);state.project=await api(`/api/projects/${projectId}`)}
+  const requestedCountry=String((state.shareKey?hashParams:params).get('country')||'').toUpperCase();
   const defaultCountry=state.project.listings.find((item)=>item.selected)?.country_code||state.bootstrap.countries[0]?.code;
   setCountry(state.bootstrap.countries.some((item)=>item.code===requestedCountry)?requestedCountry:defaultCountry,false);
-  renderPickers();fillFields();await calculate();renderRecords();bindEvents();
+  await migrateLegacyRecords();await loadRecords();renderPickers();fillFields();await calculate();renderRecords();bindEvents();
 }
 function setCountry(code,shouldCalculate=true){
   state.country=state.bootstrap.countries.find((item)=>item.code===code)||state.bootstrap.countries[0];
@@ -45,9 +67,11 @@ function setCountry(code,shouldCalculate=true){
   updateLinks();if(shouldCalculate){fillFields();state.pending=calculate()}
 }
 function renderPickers(){
-  $('#projectPicker').innerHTML=state.bootstrap.projects.map((item)=>`<option value="${item.id}" ${Number(item.id)===Number(state.project.id)?'selected':''}>${escapeHtml(item.name)}</option>`).join('');
+  const projects=state.bootstrap.projects||[state.project];
+  $('#projectPicker').innerHTML=projects.map((item)=>`<option value="${item.id}" ${Number(item.id)===Number(state.project.id)?'selected':''}>${escapeHtml(item.name)}</option>`).join('');
+  $('#projectPicker').closest('.project-picker').hidden=Boolean(state.shareKey);
 }
-function refreshProjectSummary(){const summary=state.bootstrap.projects.find((item)=>Number(item.id)===Number(state.project.id));if(summary)summary.name=state.project.name;renderPickers()}
+function refreshProjectSummary(){const summary=state.bootstrap.projects?.find((item)=>Number(item.id)===Number(state.project.id));if(summary)summary.name=state.project.name;renderPickers()}
 function fillFields(){
   for(const key of ['name','cost_cny','weight','weight_unit','length','width','height','dimension_unit'])field(key).value=state.project[key]??'';
   $('#inlineCostInput').value=state.project.cost_cny??'';
@@ -120,11 +144,11 @@ async function calculateRecord(record){
   if(record.snapshot?.detail_version===1)return;
   const version=(state.recordRequestVersions.get(record.id)||0)+1;state.recordRequestVersions.set(record.id,version);
   if(!Number(record.sale_price))return;
-  try{const payload=await api('/api/calculate',{method:'POST',body:JSON.stringify({project_id:state.project.id,country_code:state.country.code,cost_cny_override:Number(record.cost_cny??record.snapshot?.cost_cny)||0,sale_price_override:Number(record.sale_price??record.snapshot?.sale_price)||0,include_target_prices:true})});if(state.recordRequestVersions.get(record.id)!==version)return;const result=payload.results?.[0];if(result){record.snapshot={...result,cost_cny:Number(record.cost_cny??record.snapshot?.cost_cny)||0,detail_version:1};saveRecords();renderRecords()}}catch{}
+  try{const payload=await api('/api/calculate',{method:'POST',body:JSON.stringify({project_id:state.project.id,country_code:state.country.code,cost_cny_override:Number(record.cost_cny??record.snapshot?.cost_cny)||0,sale_price_override:Number(record.sale_price??record.snapshot?.sale_price)||0,include_target_prices:true})});if(state.recordRequestVersions.get(record.id)!==version)return;const result=payload.results?.[0];if(result){record.snapshot={...result,cost_cny:Number(record.cost_cny??record.snapshot?.cost_cny)||0,detail_version:1};const saved=await api(`/api/site-card-records/${encodeURIComponent(record.id)}`,{method:'PUT',body:JSON.stringify({snapshot:record.snapshot,cost_cny:record.snapshot.cost_cny,sale_price:record.snapshot.sale_price})});Object.assign(record,saved);renderRecords()}}catch{}
 }
 function calculateVisibleRecords(){visibleRecords().filter((record)=>record.snapshot?.detail_version!==1).forEach((record)=>calculateRecord(record))}
 function updateRecord(event){
-  const input=event.target;const record=recordById(input.closest('[data-record-id]')?.dataset.recordId);if(!record)return;record.name=input.value;saveRecords();
+  const input=event.target;const record=recordById(input.closest('[data-record-id]')?.dataset.recordId);if(!record)return;record.name=input.value;clearTimeout(state.recordTimers.get(record.id));state.recordTimers.set(record.id,setTimeout(async()=>{try{const saved=await api(`/api/site-card-records/${encodeURIComponent(record.id)}`,{method:'PUT',body:JSON.stringify({name:record.name})});Object.assign(record,saved);announceSync()}catch(error){toast(error.message)}},450));
 }
 function recordOutput(label,value,title='',className=''){return `<div class="record-output ${className}"${title?` tabindex="0" title="${escapeHtml(title)}"`:''}><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`}
 function renderRecords(){
@@ -143,10 +167,11 @@ function renderRecords(){
   </div>`}).join('');
   $$('[data-record-field]',table).forEach((input)=>input.oninput=updateRecord);$$('.record-delete',table).forEach((button)=>button.onclick=()=>deleteRecord(button.closest('[data-record-id]').dataset.recordId));calculateVisibleRecords();
 }
-function addRecord(){
-  if(!state.result||!Number(state.listing.sale_price))return toast('请先填写售价');const count=visibleRecords().length+1;const snapshot=JSON.parse(JSON.stringify({...state.result,cost_cny:Number(state.project.cost_cny)||0,detail_version:1}));state.records.push({id:crypto.randomUUID?.()||`${Date.now()}-${Math.random()}`,project_id:Number(state.project.id),country_code:state.country.code,name:`${state.project.name} 方案${count}`,snapshot});saveRecords();renderRecords();toast('已保存当前计算记录')
+async function addRecord(){
+  if(!state.result||!Number(state.listing.sale_price))return toast('请先填写售价');const count=visibleRecords().length+1;const snapshot=JSON.parse(JSON.stringify({...state.result,cost_cny:Number(state.project.cost_cny)||0,detail_version:1}));
+  try{const record=await api(`/api/projects/${state.project.id}/site-card-records`,{method:'POST',body:JSON.stringify({country_code:state.country.code,name:`${state.project.name} 方案${count}`,cost_cny:snapshot.cost_cny,sale_price:snapshot.sale_price,snapshot})});state.records.push(record);renderRecords();announceSync();toast('已保存当前计算记录')}catch(error){toast(error.message)}
 }
-function deleteRecord(id){state.records=state.records.filter((item)=>item.id!==id);state.recordResults.delete(id);clearTimeout(state.recordTimers.get(id));state.recordTimers.delete(id);state.recordRequestVersions.delete(id);saveRecords();renderRecords();toast('记录已删除')}
+async function deleteRecord(id){try{await api(`/api/site-card-records/${encodeURIComponent(id)}`,{method:'DELETE'});state.records=state.records.filter((item)=>item.id!==id);state.recordResults.delete(id);clearTimeout(state.recordTimers.get(id));state.recordTimers.delete(id);state.recordRequestVersions.delete(id);renderRecords();announceSync();toast('记录已删除')}catch(error){toast(error.message)}}
 
 async function saveProduct(){
   saving(true);try{
@@ -171,16 +196,16 @@ function recognizeDimensions(text){const parsed=window.DimensionParser?.parseDim
 async function readDimensions(){if(!navigator.clipboard?.readText)return toast('请将完整尺寸直接粘贴到任一尺寸框');try{const text=await navigator.clipboard.readText();if(!text.trim())return toast('剪贴板为空');recognizeDimensions(text)}catch{toast('剪贴板读取被拦截，请直接粘贴到尺寸框')}}
 function handleDimensionPaste(event){const text=event.clipboardData?.getData('text')||'';const parsed=window.DimensionParser?.parseDimensions(text,field('dimension_unit').value||'cm');if(!parsed)return;event.preventDefault();applyDimensions(parsed)}
 async function copyResult(){if(!state.result||!Number(state.listing.sale_price))return toast('请先填写售价');const text=`${number(state.result.profit_rate,1)}%`;const helper=document.createElement('textarea');helper.value=text;helper.setAttribute('readonly','');helper.style.cssText='position:fixed;left:-10000px;top:0;opacity:0';document.body.append(helper);helper.focus();helper.select();let copied=document.execCommand('copy');helper.remove();if(!copied){try{await navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob([text],{type:'text/plain'})})]);copied=true}catch{try{await navigator.clipboard.writeText(text);copied=true}catch{}}}toast(copied?`已复制利润率 ${text}`:'复制失败，请重试')}
-async function reloadFromSharedData(message={}){if(message.projectId&&Number(message.projectId)!==Number(state.project.id))return;clearTimeout(state.reloadTimer);state.reloadTimer=setTimeout(async()=>{try{state.project=await api(`/api/projects/${state.project.id}`);state.listing=state.project.listings.find((item)=>item.country_code===state.country.code);refreshProjectSummary();fillFields();await calculate();calculateVisibleRecords()}catch{}},180)}
+async function reloadFromSharedData(message={}){if(message.projectId&&Number(message.projectId)!==Number(state.project.id))return;clearTimeout(state.reloadTimer);state.reloadTimer=setTimeout(async()=>{try{state.project=await api(`/api/projects/${state.project.id}`);state.listing=state.project.listings.find((item)=>item.country_code===state.country.code);await loadRecords();refreshProjectSummary();fillFields();await calculate();renderRecords()}catch{}},180)}
 
 function bindEvents(){
-  $('#projectPicker').onchange=async(event)=>{await state.pending;state.project=await api(`/api/projects/${event.target.value}`);const code=state.project.listings.some((item)=>item.country_code===state.country.code)?state.country.code:state.bootstrap.countries[0].code;setCountry(code,false);renderPickers();fillFields();await calculate();renderRecords()};
+  $('#projectPicker').onchange=async(event)=>{await state.pending;state.project=await api(`/api/projects/${event.target.value}`);const code=state.project.listings.some((item)=>item.country_code===state.country.code)?state.country.code:state.bootstrap.countries[0].code;setCountry(code,false);await loadRecords();renderPickers();fillFields();await calculate();renderRecords()};
   for(const name of ['name','cost_cny','weight','weight_unit','length','width','height','dimension_unit']){const input=field(name);input.oninput=()=>debounceSave(saveProduct,'productTimer');input.onchange=()=>{clearTimeout(state.productTimer);state.pending=saveProduct()}}
   for(const name of ['sale_price','category_text','referral_rate_override']){const input=field(name);input.oninput=()=>debounceSave(saveListing,'listingTimer');input.onchange=()=>{clearTimeout(state.listingTimer);state.pending=saveListing()}}
   bindCostEditor($('#inlineCostInput'));
   $('#readDimensionsBtn').onclick=readDimensions;$$('[data-site-dimension]').forEach((input)=>input.addEventListener('paste',handleDimensionPaste));$('#copyResultBtn').onclick=copyResult;
   $('#openParametersBtn').onclick=openParameters;$('#newRecordBtn').onclick=addRecord;$$('[data-close-parameters]').forEach((button)=>button.onclick=closeParameters);document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&!$('#parametersModal').hidden)closeParameters()});
-  syncChannel?.addEventListener('message',(event)=>{if(event.data?.source!=='site-card')reloadFromSharedData(event.data)});window.addEventListener('storage',(event)=>{if(event.key===recordStorageKey){state.records=loadRecords();renderRecords();return}if(!['margingo-github-pages-v1','margingo-sync-pulse'].includes(event.key))return;let message={};try{message=JSON.parse(event.newValue)||{}}catch{}reloadFromSharedData(message)});window.addEventListener('focus',()=>reloadFromSharedData());
+  syncChannel?.addEventListener('message',(event)=>{if(event.data?.source!=='site-card')reloadFromSharedData(event.data)});window.addEventListener('focus',()=>reloadFromSharedData());
 }
 
 initialize().catch((error)=>{console.error(error);toast(`加载失败：${error.message}`);$('#resultGrid').innerHTML=`<div class="empty-result">${escapeHtml(error.message)}</div>`});

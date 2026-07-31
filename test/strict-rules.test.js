@@ -2,17 +2,17 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const db = require('../lib/db');
+const rules = require('../docs/data/rules.json');
 const { calculateProfit } = require('../lib/profit');
 
 function calculate(countryCode, project, listing) {
   return calculateProfit({
     project,
     listing,
-    country:db.prepare('SELECT * FROM countries WHERE code=?').get(countryCode),
-    fbaRules:db.prepare('SELECT * FROM fba_rules WHERE country_code=?').all(countryCode),
-    sizeTiers:db.prepare('SELECT * FROM size_tiers WHERE country_code=?').all(countryCode),
-    freightRule:db.prepare('SELECT * FROM freight_rules WHERE country_code=?').get(countryCode)
+    country:rules.countries.find((row)=>row.code===countryCode),
+    fbaRules:rules.fba_rules.filter((row)=>row.country_code===countryCode),
+    sizeTiers:rules.size_tiers.filter((row)=>row.country_code===countryCode),
+    freightRule:rules.freight_rules.find((row)=>row.country_code===countryCode)
   });
 }
 
