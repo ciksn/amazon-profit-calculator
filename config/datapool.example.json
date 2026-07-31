@@ -1,0 +1,9 @@
+{
+  "base_url": "https://datapool-api-shmlkihdla-de.a.run.app",
+  "api_key": "请填入数据池密钥",
+  "database_url": "postgresql://margingo:请填入密码@127.0.0.1:5432/margingo",
+  "owner_name": "",
+  "analysis_start_date": "",
+  "analysis_end_date": "",
+  "request_timeout_ms": 60000
+}

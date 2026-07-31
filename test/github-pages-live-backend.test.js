@@ -56,6 +56,7 @@ test('Pages build rejects a missing or unsafe live API origin',()=>{
 
 test('Pages workflow builds the live-backed artifact before deployment',()=>{
   const workflow=fs.readFileSync(path.join(root,'.github','workflows','deploy-pages.yml'),'utf8');
+  assert.match(workflow,/actions\/checkout@v4[\s\S]*?with:\s*\n\s+ref:\s*main/);
   assert.match(workflow,/npm ci/);
   assert.match(workflow,/npm run build:pages/);
   assert.match(workflow,/MARGINGO_PAGES_API_BASE:/);

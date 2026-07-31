@@ -23,7 +23,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
+      # Pages is production: always publish the canonical main branch.
+      # This also prevents workflow_dispatch on a feature branch from
+      # temporarily replacing production until the next scheduled run.
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: 24
