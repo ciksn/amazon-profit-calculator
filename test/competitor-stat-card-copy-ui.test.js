@@ -21,11 +21,11 @@ test('single-card copy uses integer USD revenue and one-decimal profit rate',()=
   assert.match(js,/function competitorStatValues\(rows\)/);
   assert.match(js,/revenue:number\([^\n]+,0\)/);
   assert.match(js,/profit:number\([^\n]+,1\)/);
-  assert.match(js,/`\$\{values\.revenue\}USD`,`\$\{values\.profit\}%`/);
+  assert.match(js,/writePlainText\(`\$\{values\.revenue\}USD\/\$\{values\.profit\}%`\)/);
   assert.match(js,/function copyCompetitorStat\(code\)/);
 });
 
-test('single-card copy writes revenue and profit into adjacent cells',async()=>{
+test('single-card copy writes one plain-text string without table structure',async()=>{
   const start=js.indexOf('function competitorStatRows(code)');
   const end=js.indexOf('function renderCompetitorStats()',start);
   const written=[];
@@ -36,12 +36,11 @@ test('single-card copy writes revenue and profit into adjacent cells',async()=>{
       {country_code:'US',name:'C',sale_price:10,profit_rate:64.9,monthly_sales:1,monthly_revenue_usd:1085439.5}
     ]},
     number:(value,digits=2)=>Number(value||0).toLocaleString('zh-CN',{maximumFractionDigits:digits}),
-    writeRows:async(rows)=>written.push(rows),toast:()=>{},marketCode:(code)=>code
+    writePlainText:async(text)=>written.push(text),toast:()=>{},marketCode:(code)=>code
   };
   vm.runInNewContext(js.slice(start,end),context);
   await context.copyCompetitorStat('US');
-  assert.equal(written[0][0][0],'1,085,439USD');
-  assert.equal(written[0][0][1],'64.8%');
+  assert.equal(written[0],'1,085,439USD/64.8%');
 });
 
 test('statistics container delegates click Enter and Space to card copy',()=>{

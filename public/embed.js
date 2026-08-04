@@ -238,7 +238,7 @@ function competitorStatValues(rows){
 async function copyCompetitorStat(code){
   const rows=competitorStatRows(code);if(!rows.length)throw new Error('暂无可复制的竞品统计');
   const values=competitorStatValues(rows);
-  await writeRows([[`${values.revenue}USD`,`${values.profit}%`]]);
+  await writePlainText(`${values.revenue}USD/${values.profit}%`);
   toast(`已复制 ${marketCode(code)} 站竞品统计`);
 }
 function renderCompetitorStats(){
@@ -483,6 +483,12 @@ async function flushDrafts(){
     const listing=state.project.listings.find((item)=>item.country_code===code);
     if(Number(value||0)!==Number(listing?.sale_price||0))await savePrice(code,value);
   }
+}
+async function writePlainText(text){
+  const value=String(text??'');
+  try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(value);return}}catch{}
+  const helper=document.createElement('textarea');helper.value=value;helper.style.cssText='position:fixed;left:-10000px;top:0;opacity:.01;pointer-events:none';document.body.append(helper);helper.select();const copied=document.execCommand('copy');helper.remove();
+  if(!copied)throw new Error('复制失败，请重试');
 }
 async function writeRows(rows,linkIndex=-1){
   const tsv=rows.map((row)=>row.join('\t')).join('\n');
