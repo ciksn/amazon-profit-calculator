@@ -21,11 +21,11 @@ test('single-card copy uses integer USD revenue and one-decimal profit rate',()=
   assert.match(js,/function competitorStatValues\(rows\)/);
   assert.match(js,/revenue:number\([^\n]+,0\)/);
   assert.match(js,/profit:number\([^\n]+,1\)/);
-  assert.match(js,/`\$\{values\.revenue\}USD\/\$\{values\.profit\}%`/);
+  assert.match(js,/`\$\{values\.revenue\}USD`,`\$\{values\.profit\}%`/);
   assert.match(js,/function copyCompetitorStat\(code\)/);
 });
 
-test('single-card copy writes the confirmed plain-text format',async()=>{
+test('single-card copy writes revenue and profit into adjacent cells',async()=>{
   const start=js.indexOf('function competitorStatRows(code)');
   const end=js.indexOf('function renderCompetitorStats()',start);
   const written=[];
@@ -40,7 +40,8 @@ test('single-card copy writes the confirmed plain-text format',async()=>{
   };
   vm.runInNewContext(js.slice(start,end),context);
   await context.copyCompetitorStat('US');
-  assert.equal(written[0][0][0],'1,085,439USD/64.8%');
+  assert.equal(written[0][0][0],'1,085,439USD');
+  assert.equal(written[0][0][1],'64.8%');
 });
 
 test('statistics container delegates click Enter and Space to card copy',()=>{

@@ -238,7 +238,7 @@ function competitorStatValues(rows){
 async function copyCompetitorStat(code){
   const rows=competitorStatRows(code);if(!rows.length)throw new Error('暂无可复制的竞品统计');
   const values=competitorStatValues(rows);
-  await writeRows([[`${values.revenue}USD/${values.profit}%`]]);
+  await writeRows([[`${values.revenue}USD`,`${values.profit}%`]]);
   toast(`已复制 ${marketCode(code)} 站竞品统计`);
 }
 function renderCompetitorStats(){
