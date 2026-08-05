@@ -22,3 +22,23 @@ test('品类搜索结果具有展开、选中、键盘高亮和空结果样式',
     assert.ok(css.includes(selector),`缺少 ${selector} 样式`);
   }
 });
+
+test('品类组合框支持过滤、空结果、键盘导航和复用项目切换流程',()=>{
+  const js=read('public/embed.js');
+  assert.match(js,/function renderProjectPicker\(query=''\)/);
+  assert.match(js,/toLocaleLowerCase\(\)\.includes\(normalized\)/);
+  assert.match(js,/未找到品类/);
+  assert.match(js,/event\.key==='ArrowDown'/);
+  assert.match(js,/event\.key==='ArrowUp'/);
+  assert.match(js,/event\.key==='Enter'/);
+  assert.match(js,/event\.key==='Escape'/);
+  assert.match(js,/aria-activedescendant/);
+  assert.match(js,/\.onfocusout=/);
+  assert.match(js,/async function selectProject\(projectId\)/);
+  assert.match(js,/history\.replaceState\(null,'',`\?project=\$\{state\.project\.id\}`\)/);
+});
+
+test('品类名称以文本方式写入候选项',()=>{
+  const js=read('public/embed.js');
+  assert.match(js,/button\.textContent=project\.name/);
+});

@@ -60,11 +60,28 @@ async function initialize(){
   state.activeSimilarSiteCode=state.bootstrap.countries[0]?.code||'';
   fillProduct();await calculate();await loadCompetitors();bindEvents();
 }
-async function refreshProjects(){
-  state.bootstrap=await api('/api/bootstrap');
-  const options=state.bootstrap.projects.map((item)=>`<option value="${item.id}" ${Number(item.id)===Number(state.project.id)?'selected':''}>${escapeHtml(item.name)}</option>`).join('');
-  $('#projectPicker').innerHTML=options||`<option value="${state.project.id}">${escapeHtml(state.project.name)}</option>`;
+let highlightedProjectIndex=-1;
+function projectSummaries(){return state.bootstrap?.projects||[]}
+function currentProjectName(){return state.project?.name||''}
+function matchingProjects(query=''){
+  const normalized=query.trim().toLocaleLowerCase();
+  return normalized?projectSummaries().filter((project)=>String(project.name||'').toLocaleLowerCase().includes(normalized)):projectSummaries();
 }
+function renderProjectPicker(query=''){
+  const input=$('#projectPicker');const list=$('#projectPickerList');const projects=matchingProjects(query);list.replaceChildren();
+  if(!projects.length){const empty=document.createElement('div');empty.className='project-picker-empty';empty.textContent='未找到品类';list.append(empty);highlightedProjectIndex=-1;input.removeAttribute('aria-activedescendant');return}
+  if(highlightedProjectIndex>=projects.length)highlightedProjectIndex=projects.length-1;
+  projects.forEach((project,index)=>{const button=document.createElement('button');button.type='button';button.id=`project-picker-option-${project.id}`;button.className=`project-picker-option${Number(project.id)===Number(state.project.id)?' selected':''}${index===highlightedProjectIndex?' highlighted':''}`;button.dataset.projectId=project.id;button.setAttribute('role','option');button.setAttribute('aria-selected',String(Number(project.id)===Number(state.project.id)));button.textContent=project.name;list.append(button)});
+  if(highlightedProjectIndex>=0)input.setAttribute('aria-activedescendant',list.children[highlightedProjectIndex].id);else input.removeAttribute('aria-activedescendant');
+}
+function openProjectPicker(){const input=$('#projectPicker');highlightedProjectIndex=-1;renderProjectPicker(input.value===currentProjectName()?'':input.value);$('#projectPickerList').hidden=false;input.setAttribute('aria-expanded','true')}
+function closeProjectPicker({restore=true}={}){const input=$('#projectPicker');$('#projectPickerList').hidden=true;input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');highlightedProjectIndex=-1;if(restore)input.value=currentProjectName()}
+async function selectProject(projectId){
+  const nextId=Number(projectId);if(!nextId||nextId===Number(state.project.id)){closeProjectPicker();return}
+  try{state.project=await api(`/api/projects/${nextId}`);history.replaceState(null,'',`?project=${state.project.id}`);fillProduct();closeProjectPicker();await calculate();await loadCompetitors()}
+  catch(error){closeProjectPicker();toast(error.message)}
+}
+async function refreshProjects(){state.bootstrap=await api('/api/bootstrap');$('#projectPicker').value=currentProjectName();renderProjectPicker()}
 function sharedCategory(){return state.project.listings.find((item)=>item.selected&&item.category_text)?.category_text||state.project.listings.find((item)=>item.category_text)?.category_text||''}
 function fillProduct(){
   for(const key of ['name','cost_cny','weight','weight_unit','length','width','height','dimension_unit'])$(`[name="${key}"]`,$('#productFields')).value=state.project[key]??'';
@@ -500,7 +517,22 @@ function bindEvents(){
     }
     input.onchange=()=>{state.pending=input.name==='category_text'?saveCategory():saveProduct()};
   });
-  $('#projectPicker').onchange=async(event)=>{state.project=await api(`/api/projects/${event.target.value}`);history.replaceState(null,'',`?project=${state.project.id}`);fillProduct();await calculate();await loadCompetitors()};
+  const projectPicker=$('#projectPicker');const projectPickerList=$('#projectPickerList');const projectPickerRoot=projectPicker.closest('.project-picker');
+  projectPicker.onfocus=openProjectPicker;
+  projectPicker.onclick=openProjectPicker;
+  projectPicker.oninput=()=>{highlightedProjectIndex=-1;renderProjectPicker(projectPicker.value);openProjectPicker()};
+  projectPicker.onkeydown=(event)=>{
+    if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+      event.preventDefault();if(projectPickerList.hidden)openProjectPicker();
+      const count=$$('.project-picker-option',projectPickerList).length;if(!count)return;
+      highlightedProjectIndex=event.key==='ArrowDown'?(highlightedProjectIndex+1)%count:(highlightedProjectIndex<=0?count-1:highlightedProjectIndex-1);renderProjectPicker(projectPicker.value===currentProjectName()?'':projectPicker.value);$$('.project-picker-option',projectPickerList)[highlightedProjectIndex]?.scrollIntoView({block:'nearest'});return;
+    }
+    if(event.key==='Enter'&&!projectPickerList.hidden){event.preventDefault();const option=$$('.project-picker-option',projectPickerList)[highlightedProjectIndex]||$$('.project-picker-option',projectPickerList)[0];if(option)selectProject(option.dataset.projectId);return}
+    if(event.key==='Escape'){event.preventDefault();closeProjectPicker();projectPicker.blur()}
+  };
+  projectPickerList.onclick=(event)=>{const option=event.target.closest('[data-project-id]');if(option)selectProject(option.dataset.projectId)};
+  projectPickerRoot.onfocusout=(event)=>{if(!projectPickerRoot.contains(event.relatedTarget))closeProjectPicker()};
+  document.addEventListener('pointerdown',(event)=>{if(!event.target.closest('.project-picker'))closeProjectPicker()});
   $('#newProjectBtn').onclick=async()=>{state.project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:`新品测算 ${state.bootstrap.projects.length+1}`})});history.replaceState(null,'',`?project=${state.project.id}`);await refreshProjects();fillProduct();await calculate();await loadCompetitors();toast('已新建品类')};
   $('#deleteProjectBtn').onclick=requestProjectDelete;
   $('#confirmProjectDelete').onclick=confirmProjectDelete;
