@@ -71,15 +71,26 @@ function renderProjectPicker(query=''){
   const input=$('#projectPicker');const list=$('#projectPickerList');const projects=matchingProjects(query);list.replaceChildren();
   if(!projects.length){const empty=document.createElement('div');empty.className='project-picker-empty';empty.textContent='未找到品类';list.append(empty);highlightedProjectIndex=-1;input.removeAttribute('aria-activedescendant');return}
   if(highlightedProjectIndex>=projects.length)highlightedProjectIndex=projects.length-1;
-  projects.forEach((project,index)=>{const button=document.createElement('button');button.type='button';button.id=`project-picker-option-${project.id}`;button.className=`project-picker-option${Number(project.id)===Number(state.project.id)?' selected':''}${index===highlightedProjectIndex?' highlighted':''}`;button.dataset.projectId=project.id;button.setAttribute('role','option');button.setAttribute('aria-selected',String(Number(project.id)===Number(state.project.id)));button.textContent=project.name;list.append(button)});
+  projects.forEach((project,index)=>{const button=document.createElement('button');button.type='button';button.tabIndex=-1;button.onpointerdown=(event)=>event.preventDefault();button.id=`project-picker-option-${project.id}`;button.className=`project-picker-option${Number(project.id)===Number(state.project.id)?' selected':''}${index===highlightedProjectIndex?' highlighted':''}`;button.dataset.projectId=project.id;button.setAttribute('role','option');button.setAttribute('aria-selected',String(Number(project.id)===Number(state.project.id)));button.textContent=project.name;list.append(button)});
   if(highlightedProjectIndex>=0)input.setAttribute('aria-activedescendant',list.children[highlightedProjectIndex].id);else input.removeAttribute('aria-activedescendant');
 }
 function openProjectPicker(){const input=$('#projectPicker');highlightedProjectIndex=-1;renderProjectPicker(input.value===currentProjectName()?'':input.value);$('#projectPickerList').hidden=false;input.setAttribute('aria-expanded','true')}
 function closeProjectPicker({restore=true}={}){const input=$('#projectPicker');$('#projectPickerList').hidden=true;input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');highlightedProjectIndex=-1;if(restore)input.value=currentProjectName()}
-async function selectProject(projectId){
-  const nextId=Number(projectId);if(!nextId||nextId===Number(state.project.id)){closeProjectPicker();return}
-  try{state.project=await api(`/api/projects/${nextId}`);history.replaceState(null,'',`?project=${state.project.id}`);fillProduct();closeProjectPicker();await calculate();await loadCompetitors()}
-  catch(error){closeProjectPicker();toast(error.message)}
+let queuedProjectId=null;
+let projectSwitchPromise=null;
+async function runProjectSwitchQueue(){
+  while(queuedProjectId!=null){
+    const nextId=queuedProjectId;queuedProjectId=null;
+    if(!nextId||nextId===Number(state.project.id)){closeProjectPicker();continue}
+    try{state.project=await api(`/api/projects/${nextId}`);history.replaceState(null,'',`?project=${state.project.id}`);fillProduct();closeProjectPicker();await calculate();await loadCompetitors()}
+    catch(error){closeProjectPicker();toast(error.message)}
+  }
+}
+function selectProject(projectId){
+  const nextId=Number(projectId);if(!nextId){closeProjectPicker();return Promise.resolve()}
+  queuedProjectId=nextId;
+  if(!projectSwitchPromise)projectSwitchPromise=runProjectSwitchQueue().finally(()=>{projectSwitchPromise=null});
+  return projectSwitchPromise;
 }
 async function refreshProjects(){state.bootstrap=await api('/api/bootstrap');$('#projectPicker').value=currentProjectName();renderProjectPicker()}
 function sharedCategory(){return state.project.listings.find((item)=>item.selected&&item.category_text)?.category_text||state.project.listings.find((item)=>item.category_text)?.category_text||''}
@@ -522,6 +533,7 @@ function bindEvents(){
   projectPicker.onclick=openProjectPicker;
   projectPicker.oninput=()=>{highlightedProjectIndex=-1;renderProjectPicker(projectPicker.value);openProjectPicker()};
   projectPicker.onkeydown=(event)=>{
+    if(event.isComposing||event.keyCode===229)return;
     if(event.key==='ArrowDown'||event.key==='ArrowUp'){
       event.preventDefault();if(projectPickerList.hidden)openProjectPicker();
       const count=$$('.project-picker-option',projectPickerList).length;if(!count)return;
