@@ -13,6 +13,8 @@ test('飞书卡片版使用可搜索组合框选择品类',()=>{
   assert.match(html,/id="projectPicker"[^>]*role="combobox"/);
   assert.match(html,/aria-controls="projectPickerList"/);
   assert.match(html,/id="projectPickerList"[^>]*role="listbox"/);
+  assert.match(html,/class="project-picker-search-icon"/);
+  assert.doesNotMatch(html,/class="project-picker-arrow"/);
   assert.doesNotMatch(html,/<select id="projectPicker"/);
 });
 
