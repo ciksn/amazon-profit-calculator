@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MarginGo · 个人利润率看板</title>
+  <link rel="stylesheet" href="./dashboard.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">M</span><span><b>MarginGo</b><small>全球利润工作台</small></span></div>
+      <nav>
+        <a class="nav-item active" href="/"><span>▦</span>个人利润看板</a>
+        <a class="nav-item" href="/calculator"><span>⌁</span>利润计算</a>
+      </nav>
+      <div class="readonly"><i></i><div><b>本地手动清单</b><small>利润来自 MarginGo 计算器</small></div></div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow">PERSONAL PROFIT DASHBOARD</p><h1><span id="greeting">你好</span>，这是你的利润率概览</h1></div>
+        <div class="profile"><span id="avatar" class="avatar">M</span><div><b id="userName">—</b><small>本地数据快照</small></div><button id="logoutBtn" type="button">清除选择</button></div>
+      </header>
+      <section class="content">
+        <div id="notice" class="notice hidden"></div>
+        <section class="summary-grid" id="summaryGrid">
+          <article class="summary-card"><span>手动产品</span><strong>—</strong><small>个父 ASIN</small></article>
+          <article class="summary-card"><span>平均利润率</span><strong>—</strong><small>完整数据站点</small></article>
+          <article class="summary-card"><span>盈利站点</span><strong>—</strong><small>利润率大于 0</small></article>
+          <article class="summary-card"><span>数据完整度</span><strong>—</strong><small>可计算站点占比</small></article>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <div><h2>手动产品看板</h2><p>点击产品行展开计算器保存的站点利润结果。</p></div>
+            <div class="panel-actions"><a class="secondary-action" href="./manual-dashboard-template.xlsx" download>下载 Excel 模板</a><button class="secondary-action" id="importBtn" type="button">导入 Excel</button><button class="primary-action" id="addProductBtn" type="button">＋ 新增产品</button><input id="excelFile" type="file" accept=".xlsx" hidden></div>
+          </div>
+          <div class="filter-bar"><select id="ownerFilter"><option value="">全部负责人</option></select><label class="search"><span>⌕</span><input id="searchInput" placeholder="搜索父/子 ASIN 或品名"></label><select id="siteFilter"><option value="">全部站点</option></select><select id="profitFilter"><option value="">全部利润状态</option><option value="positive">仅盈利</option><option value="negative">仅亏损</option></select><select id="sortFilter"><option value="updated_desc">最近更新</option><option value="sales_desc">销售额从高到低</option><option value="sales_asc">销售额从低到高</option><option value="capacity_desc">六日能力从高到低</option><option value="capacity_asc">六日能力从低到高</option></select></div>
+          <div class="table-scroll"><table><thead id="tableHead"></thead><tbody id="productRows"><tr><td><div class="loading"><i></i>正在读取你的产品…</div></td></tr></tbody></table></div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <div class="modal-layer hidden" id="productModal">
+    <form class="manual-form" id="productForm">
+      <div class="modal-head"><div><p class="eyebrow">MANUAL PRODUCT</p><h2 id="modalTitle">新增看板产品</h2></div><button type="button" class="modal-close" id="closeModal">×</button></div>
+      <input type="hidden" name="id">
+      <div class="form-grid">
+        <label><span>负责人 *</span><input name="owner_name" required maxlength="80"></label>
+        <label><span>父 ASIN *</span><input name="parent_asin" required maxlength="32"></label>
+        <label><span>子 ASIN</span><input name="child_asin" maxlength="32"></label>
+        <label><span>品名 *</span><input name="product_name" required maxlength="300"></label>
+        <label class="wide"><span>图片 URL / Data URL</span><input name="image_data"></label>
+        <label><span>长度</span><input name="length" type="number" min="0" step="0.01"></label>
+        <label><span>宽度</span><input name="width" type="number" min="0" step="0.01"></label>
+        <label><span>高度</span><input name="height" type="number" min="0" step="0.01"></label>
+        <label><span>尺寸单位</span><select name="dimension_unit"><option value="cm">cm</option><option value="ft">ft</option></select></label>
+        <label><span>重量</span><input name="weight" type="number" min="0" step="0.001"></label>
+        <label><span>重量单位</span><select name="weight_unit"><option value="kg">kg</option><option value="lb">lb</option></select></label>
+        <label><span>成本（CNY）</span><input name="cost_cny" type="number" min="0" step="0.01"></label>
+        <label><span>销售额（CNY）</span><input name="sales_amount_cny" type="number" min="0" step="0.01" value="0"></label>
+        <label><span>六日能力</span><input name="six_day_capacity" type="number" min="0" step="0.01" value="0"></label>
+      </div>
+      <div class="site-editor-head"><div><b>站点计算结果</b><small>利润与利润率填写 MarginGo 计算结果</small></div><button type="button" id="addSiteBtn">＋ 添加站点</button></div>
+      <div id="siteEditor" class="site-editor"></div>
+      <div class="modal-actions"><button type="button" class="secondary-action" id="cancelModal">取消</button><button type="submit" class="primary-action">保存产品</button></div>
+    </form>
+  </div>
+  <div class="login-layer hidden" id="loginLayer">
+    <section class="login-card">
+      <span class="login-logo">M</span><p class="eyebrow">MARGINGO ACCESS</p><h2>登录个人利润率看板</h2><p>通过飞书校验身份后，仅展示你本人负责的 ASIN 和站点利润率。</p>
+      <a class="feishu-button" href="/api/auth/login"><span>✦</span>使用飞书登录</a><small>当前为本地手动清单模式，飞书登录暂未启用</small>
+    </section>
+  </div>
+  <script src="./dashboard.js"></script>
+</body>
+</html>

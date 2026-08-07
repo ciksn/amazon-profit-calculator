@@ -13,6 +13,12 @@
 - 服务端主页面、飞书卡片版和单站卡片均采用 GitHub Pages 最新前端；保留竞品 Excel 导入与统计，不包含个人利润率看板。
 - 飞书卡片版可对当前站点月销售额前五名竞品批量抓取 Amazon 五点，并用 Gemini 一次性生成卖点与差异化短语；结果直接保存到 PostgreSQL。
 
+## PostgreSQL 个人利润率看板分支
+
+`codex/pgsql-profit-dashboard` 分支新增了独立的 `dashboard/` 前后端。看板当前从空白清单开始，负责人、产品资料和汇总指标均可手动维护，也可通过 Excel 批量导入；利润计算器中的产品可直接加入看板，并按站点展示计算结果。飞书 OAuth 已隔离，旧的公司数据池同步快照仍保留为兼容接口，不参与当前看板展示。
+
+初始化、飞书配置、公司表映射和生产权限说明见 [`dashboard/README.md`](dashboard/README.md)。
+
 ## 启动
 
 电脑需要 Node.js 22 或更高版本，以及本机安装的 PostgreSQL 14 或更高版本。先用 PostgreSQL 自带的 `createdb` 创建数据库：
@@ -43,7 +49,7 @@ npm.cmd start
 
 ## 选品文档 AI 助手
 
-先确认 Codex CLI 已安装、已完成登录并可从 `PATH` 运行。默认不需要设置 `CODEX_COMMAND`：Windows 会从 `PATH` 中的官方 npm 包自动解析对应架构的原生 `codex.exe`，并直接启动它（不经过 shell）。只有在需要覆盖命令时才在 `.env` 中设置 `CODEX_COMMAND`；Windows 的覆盖值必须指向原生 `.exe`，不要指向 `codex.cmd` 或 `codex.ps1`。基础超时时间可通过 `CODEX_AI_TIMEOUT_MS` 调整；遇到 app-server 明确标记为可重试的响应流断线时，最多再等待 `CODEX_AI_RETRY_GRACE_MS`（默认 30 秒），总 Provider 上限默认 150 秒且不会无限延长。启动服务后打开品类首页创建或选择一个品类，也可以直接访问：
+先确认 Codex CLI 已安装、已完成登录并可从 `PATH` 运行。默认不需要设置 `CODEX_COMMAND`：Windows 会从 `PATH` 中的官方 npm 包自动解析对应架构的原生 `codex.exe`，并直接启动它（不经过 shell）。只有在需要覆盖命令时才在 `.env` 中设置 `CODEX_COMMAND`；Windows 的覆盖值必须指向原生 `.exe`，不要指向 `codex.cmd` 或 `codex.ps1`。超时时间可通过 `CODEX_AI_TIMEOUT_MS` 调整。启动服务后打开品类首页创建或选择一个品类，也可以直接访问：
 
 ```text
 http://127.0.0.1:4173/selection-document.html?project=<id>
@@ -118,4 +124,4 @@ python -m http.server 4174 --directory docs
 
 ## 下一阶段建议
 
-产品汇总数据看板、批量导入/导出、账号权限、在线部署，以及完整截图 OCR 已预留为后续模块。第一版优先保证利润测算主流程和后台规则维护可运行。
+账号权限、在线部署以及完整截图 OCR 已预留为后续模块。当前版本已包含手动产品看板、Excel 导入和利润计算结果加入看板。

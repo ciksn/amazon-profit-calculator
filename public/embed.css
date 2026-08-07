@@ -41,6 +41,9 @@ button{font:inherit;cursor:pointer}.ghost-button,.copy-button{height:36px;border
 .copy-competitor-stats{height:27px;padding:0 9px;border:1px solid #d8d8de;border-radius:7px;background:#fff;color:#555;font-size:10px;font-weight:750}
 .copy-competitor-stats:hover{border-color:#ff9c58;color:var(--orange-dark)}
 .competitor-stat{min-width:310px}
+.competitor-stat[data-copy-competitor-stat]{cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+.competitor-stat[data-copy-competitor-stat]:hover{border-color:#9ed8bf;box-shadow:0 4px 14px rgba(16,124,82,.1);transform:translateY(-1px)}
+.competitor-stat[data-copy-competitor-stat]:focus-visible{outline:3px solid rgba(16,124,82,.2);outline-offset:2px;border-color:#5fbd97}
 .competitor-stat b{display:block}
 .competitor-stat-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:7px 0 5px}
 .competitor-stat-metrics span{display:block;margin:0;color:var(--green);font-size:13px;font-weight:800}
