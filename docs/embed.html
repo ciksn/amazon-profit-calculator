@@ -11,7 +11,7 @@
     <header class="embed-head">
       <div class="brand"><span>M</span><div><b>MarginGo</b><small>飞书选品利润卡片</small></div></div>
       <div class="head-actions">
-        <label class="project-picker"><span>品类</span><select id="projectPicker" aria-label="选择品类"></select></label>
+        <div class="project-picker"><label for="projectPicker">品类</label><div class="project-picker-control"><input id="projectPicker" type="search" autocomplete="off" role="combobox" aria-label="搜索并选择品类" aria-autocomplete="list" aria-expanded="false" aria-controls="projectPickerList"><span class="project-picker-search-icon" aria-hidden="true"></span><div class="project-picker-list" id="projectPickerList" role="listbox" hidden></div></div></div>
         <button class="ghost-button" id="newProjectBtn" type="button">新建</button>
         <button class="ghost-button delete-project-button" id="deleteProjectBtn" type="button">删除</button>
       </div>

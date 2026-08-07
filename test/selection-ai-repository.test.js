@@ -30,6 +30,7 @@ test('each project keeps its own provider, messages, and proposals and cascades 
   assert.equal((await repo.getState(p2.id)).messages.length,0);
   await db.query('DELETE FROM projects WHERE id=$1',[p1.id]);
   assert.equal((await db.one('SELECT COUNT(*)::int AS n FROM selection_ai_messages WHERE project_id=$1',[p1.id])).n,0);
+  assert.equal((await db.one('SELECT COUNT(*)::int AS n FROM selection_ai_conversations WHERE project_id=$1',[p1.id])).n,0);
 });
 
 test('repository stores provider state and normalizes proposal JSON values',async(t)=>{
@@ -69,6 +70,69 @@ test('repository caps recent messages and resolves proposals within the supplied
   const resolved=await db.transaction((client)=>repo.resolveProposal(proposal.id,'applied',[{field:'positioning',after:'new'}],client));
   assert.equal(resolved.status,'applied');
   assert.deepEqual(resolved.applied_changes,[{field:'positioning',after:'new'}]);
+});
+
+test('repository pages unsummarized messages by project and ascending summary cursor',async(t)=>{
+  const repo=createSelectionAiRepository(db);
+  const firstProject=await project('AI summary pagination A');
+  const secondProject=await project('AI summary pagination B');
+  t.after(()=>removeProjects([firstProject,secondProject]));
+  const firstProjectMessages=[];
+
+  for (let index=0;index<205;index++) {
+    firstProjectMessages.push(await repo.createMessage({
+      projectId:firstProject.id,role:'user',provider:'codex',
+      content:`project-a-${index}`,status:'completed'
+    }));
+    if (index%50===0) {
+      await repo.createMessage({
+        projectId:secondProject.id,role:'user',provider:'codex',
+        content:`project-b-${index}`,status:'completed'
+      });
+    }
+  }
+  const beforeId=firstProjectMessages.at(-1).id+1;
+
+  const firstPage=await repo.listMessagesForSummary(firstProject.id,{
+    afterId:0,beforeId,limit:500
+  });
+  const secondPage=await repo.listMessagesForSummary(firstProject.id,{
+    afterId:firstPage.at(-1).id,beforeId,limit:500
+  });
+
+  assert.equal(firstPage.length,200);
+  assert.equal(secondPage.length,5);
+  assert.deepEqual(
+    [...firstPage,...secondPage].map((message)=>message.content),
+    Array.from({length:205},(_,index)=>`project-a-${index}`)
+  );
+  const otherState=await repo.getState(secondProject.id);
+  assert.equal(otherState.messages.length,5);
+  assert.equal(Number(otherState.conversation.summary_message_id),0);
+});
+
+test('repository persists summary and cursor together and clear resets both',async(t)=>{
+  const repo=createSelectionAiRepository(db);
+  const p=await project('AI summary cursor');
+  t.after(()=>removeProjects([p]));
+  const message=await repo.createMessage({
+    projectId:p.id,role:'user',provider:'codex',content:'summarized',status:'completed'
+  });
+
+  await repo.setSummary(p.id,'cursor summary',message.id);
+  let state=await repo.getState(p.id);
+  assert.equal(state.conversation.summary,'cursor summary');
+  assert.equal(Number(state.conversation.summary_message_id),message.id);
+
+  await repo.setSummary(p.id,'compatible summary update');
+  state=await repo.getState(p.id);
+  assert.equal(state.conversation.summary,'compatible summary update');
+  assert.equal(Number(state.conversation.summary_message_id),message.id);
+
+  await repo.clear(p.id);
+  state=await repo.getState(p.id);
+  assert.equal(state.conversation.summary,'');
+  assert.equal(Number(state.conversation.summary_message_id),0);
 });
 
 test('repository creates proposals and updates messages with an optional transaction client',async(t)=>{

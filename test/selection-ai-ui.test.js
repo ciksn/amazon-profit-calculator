@@ -8,6 +8,10 @@ const path=require('node:path');
 const root=path.resolve(__dirname,'..');
 const read=(file)=>fs.readFileSync(path.join(root,file),'utf8');
 const ui=require('../public/selection-ai.js');
+const {
+  createAsyncOperationRegistry,
+  flushSaveQueues
+}=require('../public/selection-document.js');
 
 function memoryStorage() {
   const values=new Map();
@@ -15,6 +19,16 @@ function memoryStorage() {
     getItem:(key)=>values.has(key)?values.get(key):null,
     setItem:(key,value)=>values.set(key,String(value))
   };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise=new Promise((accept,decline)=>{
+    resolve=accept;
+    reject=decline;
+  });
+  return {promise,resolve,reject};
 }
 
 test('选品页包含语义化 AI 工作台、手动 Provider 切换和提案操作',()=>{
@@ -237,7 +251,7 @@ class FakeElement {
 function panelHarness({
   turn='complete',proposal=null,apply='conflict',narrow=true,confirmResponses=[true],
   interrupt='success',providerError=false,resolvedStatus='',delayStateAfterTurn=false,
-  stateErrorAfterTurn=false
+  stateErrorAfterTurn=false,flush='success',reload='success'
 }={}){
   const document={activeElement:null,elements:{},querySelector(selector){return this.elements[selector]||null}};
   for(const id of [
@@ -260,6 +274,12 @@ function panelHarness({
   const interruptStarted=new Promise((resolve)=>{notifyInterruptStarted=resolve});
   let releaseState;
   const stateGate=new Promise((resolve)=>{releaseState=resolve});
+  let releaseFlush;
+  const flushGate=new Promise((resolve)=>{releaseFlush=resolve});
+  let releaseApply;
+  const applyGate=new Promise((resolve)=>{releaseApply=resolve});
+  let releaseReload;
+  const reloadGate=new Promise((resolve)=>{releaseReload=resolve});
   const statePayload=()=>({
     conversation:{active_provider:'codex'},
     messages:turn==='complete'&&requests.some((item)=>item.path.endsWith('/turns'))
@@ -297,9 +317,12 @@ function panelHarness({
         if(interrupt==='hang')return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>{order.push('interrupt-abort');const error=new Error('aborted');error.name='AbortError';reject(error)},{once:true}));
         return jsonResponse({status:'interrupted'});
       }
-      if(path.endsWith('/apply'))return apply==='success'
-        ? jsonResponse({id:11,status:'applied'})
-        : jsonResponse({code:'PROPOSAL_CONFLICT',error:'conflict'},{ok:false,status:409});
+      if(path.endsWith('/apply')){
+        if(apply==='delayed-success')await applyGate;
+        return apply==='success'||apply==='delayed-success'
+          ? jsonResponse({id:11,status:'applied'})
+          : jsonResponse({code:'PROPOSAL_CONFLICT',error:'conflict'},{ok:false,status:409});
+      }
       if(path.endsWith('/reject'))return jsonResponse({id:11,status:'rejected'});
       if(path.endsWith('/turns')){
         const encoder=new TextEncoder();
@@ -334,10 +357,45 @@ function panelHarness({
       return jsonResponse(statePayload());
     }
   };
-  const app={reloads:0,getSnapshot:()=>({projectId:7,chapter:'risks',data:{}}),async reload(){this.reloads+=1}};
+  const app={
+    reloads:0,
+    flushes:0,
+    exclusive:false,
+    lockTransitions:[],
+    blockedEdits:0,
+    acceptedEdits:0,
+    getSnapshot:()=>({projectId:7,chapter:'risks',data:{}}),
+    async withExclusiveReload(operation){
+      this.exclusive=true;
+      this.lockTransitions.push(true);
+      try{return await operation()}
+      finally{
+        this.exclusive=false;
+        this.lockTransitions.push(false);
+      }
+    },
+    attemptDocumentEdit(){
+      if(this.exclusive){this.blockedEdits+=1;return false}
+      this.acceptedEdits+=1;
+      return true;
+    },
+    async flushPendingSaves(){
+      this.flushes+=1;
+      if(flush==='delayed')await flushGate;
+      if(flush==='delay-second'&&this.flushes===2)await flushGate;
+      if(flush==='failure')throw new Error('document save failed');
+    },
+    async reload(){
+      this.reloads+=1;
+      if(reload==='delayed')await reloadGate;
+    }
+  };
   const panelElement=document.elements['#selectionAiPanel'];
   panelElement.focusables=[document.elements['#aiDrawerClose'],document.elements['#aiProvider'],document.elements['#aiComposer'],document.elements['#aiSend']];
-  return {root,document,elements:document.elements,requests,order,app,listeners,media,alerts,releaseState};
+  return {
+    root,document,elements:document.elements,requests,order,app,listeners,media,alerts,
+    releaseState,releaseFlush,releaseApply,releaseReload
+  };
 }
 
 test('轻量 DOM/fetch/SSE 集成：发送使用当前章节并跨 chunk 渲染完成消息',async()=>{
@@ -531,6 +589,228 @@ function fakeProposalCard(document,checkedValues=[]){
 function proposalTarget(card,action){
   return {closest(selector){if(selector==='[data-proposal-id]')return card;if(selector===`[data-${action}-proposal]`)return {};return null}};
 }
+
+test('send waits for pending document saves and keeps the draft when flush fails',async()=>{
+  const delayed=panelHarness({flush:'delayed'});
+  const delayedPanel=ui.createPanel(delayed.root);
+  await delayedPanel.init({app:delayed.app,apiBase:''});
+  delayed.elements['#aiComposer'].value='analyze the latest local draft';
+  const sending=delayed.elements['#aiSend'].emit('click');
+  for(let index=0;index<20&&delayed.app.flushes===0;index+=1)await Promise.resolve();
+
+  assert.equal(delayed.app.flushes,1);
+  assert.equal(delayed.requests.some((item)=>item.path.endsWith('/turns')),false);
+  assert.equal(delayed.elements['#aiComposer'].value,'analyze the latest local draft');
+
+  delayed.releaseFlush();
+  await sending;
+  assert.equal(delayed.requests.some((item)=>item.path.endsWith('/turns')),true);
+
+  const failed=panelHarness({flush:'failure'});
+  const failedPanel=ui.createPanel(failed.root);
+  await failedPanel.init({app:failed.app,apiBase:''});
+  failed.elements['#aiComposer'].value='keep this unsaved request';
+  await failed.elements['#aiSend'].emit('click');
+
+  assert.equal(failed.requests.some((item)=>item.path.endsWith('/turns')),false);
+  assert.equal(failed.elements['#aiComposer'].value,'keep this unsaved request');
+  assert.match(failed.elements['#aiErrorActions'].innerHTML,/document save failed/);
+});
+
+test('send waits for in-flight supplier create and delete lifecycle operations',async()=>{
+  for(const operationName of ['create','delete']){
+    const harness=panelHarness();
+    const registry=createAsyncOperationRegistry();
+    harness.app.flushPendingSaves=()=>flushSaveQueues(
+      ()=>[],
+      ()=>registry.snapshot()
+    );
+    const operationGate=deferred();
+    registry.track(operationGate.promise);
+    const panel=ui.createPanel(harness.root);
+    await panel.init({app:harness.app,apiBase:''});
+    harness.elements['#aiComposer'].value=`send after supplier ${operationName}`;
+    const sending=harness.elements['#aiSend'].emit('click');
+
+    await Promise.resolve();
+    assert.equal(
+      harness.requests.some((item)=>item.path.endsWith('/turns')),
+      false,
+      `send skipped the ${operationName} lifecycle operation`
+    );
+    operationGate.resolve();
+    await sending;
+    assert.equal(harness.requests.some((item)=>item.path.endsWith('/turns')),true);
+  }
+});
+
+test('apply and reject wait for successful save flushes before proposal requests',async()=>{
+  const proposal={id:11,status:'pending',summary:'proposal',changes:[
+    {scope:'document',field:'positioning',before:'old',after:'new',reason:'clearer'}
+  ]};
+
+  for(const action of ['apply','reject']){
+    const delayed=panelHarness({proposal,apply:'success',flush:'delayed'});
+    const panel=ui.createPanel(delayed.root);
+    await panel.init({app:delayed.app,apiBase:''});
+    const card=fakeProposalCard(delayed.document,[true]);
+    const acting=delayed.elements['#aiProposals'].emit('click',{
+      target:proposalTarget(card,action)
+    });
+    for(let index=0;index<20&&delayed.app.flushes===0;index+=1)await Promise.resolve();
+
+    assert.equal(delayed.app.flushes,1);
+    assert.equal(delayed.app.exclusive,true);
+    assert.equal(delayed.requests.some((item)=>item.path.endsWith(`/${action}`)),false);
+
+    delayed.releaseFlush();
+    await acting;
+    assert.equal(delayed.requests.some((item)=>item.path.endsWith(`/${action}`)),true);
+    assert.equal(delayed.app.exclusive,false);
+
+    const failed=panelHarness({proposal,apply:'success',flush:'failure'});
+    const failedPanel=ui.createPanel(failed.root);
+    await failedPanel.init({app:failed.app,apiBase:''});
+    await failed.elements['#aiProposals'].emit('click',{
+      target:proposalTarget(fakeProposalCard(failed.document,[true]),action)
+    });
+
+    assert.equal(failed.requests.some((item)=>item.path.endsWith(`/${action}`)),false);
+    assert.match(failed.elements['#aiProposals'].innerHTML,/data-proposal-id="11"/);
+    assert.match(failed.elements['#aiErrorActions'].innerHTML,/document save failed/);
+  }
+});
+
+test('conflict refresh flushes saves before reloading and aborts reload on failure',async()=>{
+  const proposal={id:11,status:'conflicted',summary:'conflict',changes:[
+    {scope:'document',field:'positioning',before:'old',after:'new',reason:'clearer'}
+  ]};
+  const refreshTarget=(card)=>({
+    closest(selector){
+      if(selector==='[data-proposal-id]')return card;
+      if(selector==='[data-refresh-document]')return {};
+      return null;
+    }
+  });
+
+  const delayed=panelHarness({proposal,flush:'delayed'});
+  const delayedPanel=ui.createPanel(delayed.root);
+  await delayedPanel.init({app:delayed.app,apiBase:''});
+  const refreshing=delayed.elements['#aiProposals'].emit('click',{
+    target:refreshTarget(fakeProposalCard(delayed.document,[true]))
+  });
+  for(let index=0;index<20&&delayed.app.flushes===0;index+=1)await Promise.resolve();
+
+  assert.equal(delayed.app.flushes,1);
+  assert.equal(delayed.app.reloads,0);
+  delayed.releaseFlush();
+  await refreshing;
+  assert.equal(delayed.app.reloads,1);
+
+  const failed=panelHarness({proposal,flush:'failure'});
+  const failedPanel=ui.createPanel(failed.root);
+  await failedPanel.init({app:failed.app,apiBase:''});
+  await failed.elements['#aiProposals'].emit('click',{
+    target:refreshTarget(fakeProposalCard(failed.document,[true]))
+  });
+  assert.equal(failed.app.reloads,0);
+  assert.match(failed.elements['#aiErrorActions'].innerHTML,/document save failed/);
+});
+
+test('successful apply flushes edits made during the proposal request before reload',async()=>{
+  const proposal={id:11,status:'pending',summary:'proposal',changes:[
+    {scope:'document',field:'positioning',before:'old',after:'new',reason:'clearer'}
+  ]};
+  const harness=panelHarness({proposal,apply:'success',flush:'delay-second'});
+  const panel=ui.createPanel(harness.root);
+  await panel.init({app:harness.app,apiBase:''});
+  const applying=harness.elements['#aiProposals'].emit('click',{
+    target:proposalTarget(fakeProposalCard(harness.document,[true]),'apply')
+  });
+  for(let index=0;index<30&&harness.app.flushes<2;index+=1)await Promise.resolve();
+
+  assert.equal(harness.requests.some((item)=>item.path.endsWith('/apply')),true);
+  assert.equal(harness.app.flushes,2);
+  assert.equal(harness.app.reloads,0);
+
+  harness.releaseFlush();
+  await applying;
+  assert.equal(harness.app.reloads,1);
+});
+
+test('apply keeps document editing exclusively locked across the request and reload',async()=>{
+  const proposal={id:11,status:'pending',summary:'proposal',changes:[
+    {scope:'site',country_code:'US',field:'opportunity_notes',before:'old',after:'AI value',reason:'clearer'}
+  ]};
+  const harness=panelHarness({proposal,apply:'delayed-success'});
+  const panel=ui.createPanel(harness.root);
+  await panel.init({app:harness.app,apiBase:''});
+  const applying=harness.elements['#aiProposals'].emit('click',{
+    target:proposalTarget(fakeProposalCard(harness.document,[true]),'apply')
+  });
+  for(
+    let index=0;
+    index<30&&!harness.requests.some((item)=>item.path.endsWith('/apply'));
+    index+=1
+  )await Promise.resolve();
+
+  const lockedDuringApply=harness.app.exclusive;
+  const editAccepted=harness.app.attemptDocumentEdit();
+  harness.releaseApply();
+  await applying;
+
+  assert.equal(lockedDuringApply,true);
+  assert.equal(editAccepted,false);
+  assert.equal(harness.app.blockedEdits,1);
+  assert.equal(harness.app.acceptedEdits,0);
+  assert.equal(harness.app.exclusive,false);
+  assert.deepEqual(harness.app.lockTransitions,[true,false]);
+});
+
+test('conflict refresh stays exclusively locked while document GET is in flight',async()=>{
+  const proposal={id:11,status:'conflicted',summary:'conflict',changes:[
+    {scope:'document',field:'positioning',before:'old',after:'new',reason:'clearer'}
+  ]};
+  const harness=panelHarness({proposal,reload:'delayed'});
+  const panel=ui.createPanel(harness.root);
+  await panel.init({app:harness.app,apiBase:''});
+  const card=fakeProposalCard(harness.document,[true]);
+  const refreshTarget={
+    closest(selector){
+      if(selector==='[data-proposal-id]')return card;
+      if(selector==='[data-refresh-document]')return {};
+      return null;
+    }
+  };
+  const refreshing=harness.elements['#aiProposals'].emit('click',{target:refreshTarget});
+  for(let index=0;index<30&&harness.app.reloads===0;index+=1)await Promise.resolve();
+
+  const lockedDuringReload=harness.app.exclusive;
+  const editAccepted=harness.app.attemptDocumentEdit();
+  harness.releaseReload();
+  await refreshing;
+
+  assert.equal(lockedDuringReload,true);
+  assert.equal(editAccepted,false);
+  assert.equal(harness.app.exclusive,false);
+  assert.deepEqual(harness.app.lockTransitions,[true,false]);
+});
+
+test('proposal conflict releases the exclusive document lock in finally',async()=>{
+  const proposal={id:11,status:'pending',summary:'proposal',changes:[
+    {scope:'document',field:'positioning',before:'old',after:'new',reason:'clearer'}
+  ]};
+  const harness=panelHarness({proposal,apply:'conflict'});
+  const panel=ui.createPanel(harness.root);
+  await panel.init({app:harness.app,apiBase:''});
+  await harness.elements['#aiProposals'].emit('click',{
+    target:proposalTarget(fakeProposalCard(harness.document,[true]),'apply')
+  });
+
+  assert.equal(harness.app.exclusive,false);
+  assert.deepEqual(harness.app.lockTransitions,[true,false]);
+  assert.equal(harness.app.attemptDocumentEdit(),true);
+});
 
 test('proposal 实际 checked/body：成功 apply、取消、零勾选与 reject',async()=>{
   const proposal={id:11,status:'pending',summary:'文本提案',changes:[

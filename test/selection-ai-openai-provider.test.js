@@ -38,6 +38,32 @@ function createFakeClient({
   return client;
 }
 
+function createSequencedFakeClient(attempts) {
+  const requests=[];
+  const options=[];
+  let attemptIndex=0;
+  return {
+    responses:{
+      stream(request,requestOptions={}) {
+        requests.push(request);
+        options.push(requestOptions);
+        const attempt=attempts[attemptIndex++]||{};
+        if (attempt.streamError) throw attempt.streamError;
+        return {
+          async *[Symbol.asyncIterator]() {
+            for (const event of attempt.events||[]) yield event;
+          },
+          async finalResponse() {
+            return attempt.response||{id:`resp_${attemptIndex}`,status:'completed'};
+          }
+        };
+      }
+    },
+    requests,
+    options
+  };
+}
+
 async function collect(iterable) {
   const result=[];
   for await (const event of iterable) result.push(event);
@@ -94,6 +120,118 @@ test('OpenAI Provider omits previous_response_id without stored conversation sta
 
   assert.equal(client.requests[0].model,'gpt-test');
   assert.equal(Object.hasOwn(client.requests[0],'previous_response_id'),false);
+  provider.dispose();
+});
+
+test('OpenAI Provider replaces an explicitly invalid previous response after one 400 or 404',async(t)=>{
+  for (const status of [400,404]) {
+    await t.test(String(status),async()=>{
+      const invalidStateError=Object.assign(
+        new Error(`${status} previous_response_id was not found`),
+        {
+          status,
+          param:'previous_response_id',
+          code:'previous_response_not_found'
+        }
+      );
+      const client=createSequencedFakeClient([
+        {streamError:invalidStateError},
+        {
+          events:[
+            {
+              type:'response.output_text.delta',
+              delta:'{"answer":"recovered","proposal":{"summary":"","changes":[]}}'
+            },
+            {
+              type:'response.completed',
+              response:{id:`resp_replacement_${status}`,status:'completed'}
+            }
+          ],
+          response:{id:`resp_replacement_${status}`,status:'completed'}
+        }
+      ]);
+      const provider=createOpenAiProvider({client});
+
+      const events=await collect(provider.streamTurn({
+        state:{openai_state_id:'resp_missing'},
+        system:'rules',input:'data',turnId:`invalid_previous_${status}`
+      }));
+
+      assert.equal(client.requests.length,2);
+      assert.equal(client.requests[0].previous_response_id,'resp_missing');
+      assert.equal(Object.hasOwn(client.requests[1],'previous_response_id'),false);
+      assert.deepEqual(events.at(-1).providerState,{
+        openai_state_id:`resp_replacement_${status}`
+      });
+      provider.dispose();
+    });
+  }
+});
+
+test('OpenAI Provider does not replace previous state for unrelated or transient failures',async(t)=>{
+  const cases=[
+    {
+      name:'rate limit',
+      error:Object.assign(new Error('rate limited'),{
+        status:429,param:'previous_response_id',code:'rate_limit_exceeded'
+      })
+    },
+    {
+      name:'network',
+      error:Object.assign(new Error('network failed'),{
+        code:'ECONNRESET',param:'previous_response_id'
+      })
+    },
+    {
+      name:'unrelated bad request',
+      error:Object.assign(new Error('input is invalid'),{
+        status:400,param:'input',code:'invalid_request'
+      })
+    },
+    {
+      name:'unrelated not found',
+      error:Object.assign(new Error('model was not found'),{
+        status:404,param:'model',code:'not_found'
+      })
+    }
+  ];
+  for (const item of cases) {
+    await t.test(item.name,async()=>{
+      const client=createSequencedFakeClient([
+        {streamError:item.error},
+        {response:{id:'must_not_retry',status:'completed'}}
+      ]);
+      const provider=createOpenAiProvider({client});
+
+      await assert.rejects(collect(provider.streamTurn({
+        state:{openai_state_id:'resp_existing'},
+        system:'rules',input:'data',turnId:`no_retry_${item.name}`
+      })),(error)=>error.code==='OPENAI_REQUEST_FAILED');
+      assert.equal(client.requests.length,1);
+      provider.dispose();
+    });
+  }
+});
+
+test('OpenAI Provider retries an invalid previous response only once',async()=>{
+  const invalidStateError=()=>Object.assign(
+    new Error('previous_response_id was not found'),
+    {status:404,param:'previous_response_id',code:'previous_response_not_found'}
+  );
+  const client=createSequencedFakeClient([
+    {streamError:invalidStateError()},
+    {streamError:invalidStateError()},
+    {response:{id:'must_not_retry_twice',status:'completed'}}
+  ]);
+  const provider=createOpenAiProvider({client});
+
+  await assert.rejects(collect(provider.streamTurn({
+    state:{openai_state_id:'resp_missing'},
+    system:'rules',input:'data',turnId:'retry_once'
+  })),(error)=>error.code==='OPENAI_REQUEST_FAILED');
+  assert.equal(client.requests.length,2);
+  assert.equal(client.requests[0].previous_response_id,'resp_missing');
+  assert.equal(Object.hasOwn(client.requests[1],'previous_response_id'),false);
   provider.dispose();
 });
 

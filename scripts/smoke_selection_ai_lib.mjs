@@ -24,6 +24,17 @@ export function validateCodexHealth(health) {
   return codex;
 }
 
+export function codexSmokeTerminalTimeoutMs({
+  baseTimeoutMs,
+  retryGraceMs,
+  transportMarginMs=30_000
+}) {
+  for (const [name,value] of Object.entries({baseTimeoutMs,retryGraceMs,transportMarginMs})) {
+    assert.ok(Number.isFinite(value)&&value>=0,`${name} must be a finite non-negative number`);
+  }
+  return baseTimeoutMs+retryGraceMs+transportMarginMs;
+}
+
 async function exactProjectIds(db,projectName) {
   const rows=await db.many('SELECT id FROM projects WHERE name=$1 ORDER BY id',[projectName]);
   return rows
