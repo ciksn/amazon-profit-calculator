@@ -7,13 +7,14 @@
 - `/`：完整计算页面和规则管理
 - `/embed.html`：卡片版（含竞品、Excel 导入、卖点分析、日本税项）
 - `/site-card.html`：小站点卡片版（含 PostgreSQL 方案记录）
-- `/api/health`：应用与数据库健康检查
+- `/healthz`：不返回业务数据的容器健康检查
+- `/api/health`：需携带 SSO token 的数据库健康检查
 
 ## 推荐部署：Docker Compose
 
 服务器准备 Docker Engine、Docker Compose、域名和 HTTPS 证书。把整个项目目录交付到服务器后：
 
-1. 将 `deploy/.env.production.example` 复制为 `deploy/.env.production`，设置随机 PostgreSQL 密码、`GEMINI_API_KEY_ENCRYPTED` 和 `GEMINI_KEY_ENCRYPTION_KEY`。
+1. 将 `deploy/.env.production.example` 复制为 `deploy/.env.production`，设置 PostgreSQL 密码、`LOGIN_CENTER_BASE`、`APP_PUBLIC_URL` 与 AI 密钥。
 2. 解密主密钥优先通过云平台 Secret、CI/CD Secret 或服务器受限环境变量注入；不得提交到 Git。
 3. 在项目根目录执行：
 
@@ -21,7 +22,7 @@
    docker compose --env-file deploy/.env.production -f deploy/docker-compose.yml up -d --build
    ```
 
-4. 检查 `http://127.0.0.1:4173/api/health` 返回 `{"ok":true,"database":"postgresql"}`。
+4. 检查 `http://127.0.0.1:8080/healthz` 返回 `{"ok":true}`。
 5. 将 `deploy/nginx.conf` 中的域名改为实际域名，启用 Nginx，并使用 Certbot 或云负载均衡配置 HTTPS。
 6. 这是内部业务工具，正式公网开放前应在 Nginx、零信任网关或公司 SSO 层增加身份验证和访问控制。
 
@@ -35,12 +36,23 @@ Compose 中 PostgreSQL 使用命名卷 `postgres_data` 持久化；删除容器�
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE
 PGSSL=require
 NODE_ENV=production
-PORT=4173
+PORT=8080
+LOGIN_CENTER_BASE=https://login-center.example.com
+APP_PUBLIC_URL=https://margin.example.com
+PG_POOL_MAX=4
 GEMINI_API_KEY_ENCRYPTED=...
 GEMINI_KEY_ENCRYPTION_KEY=...
 ```
 
-数据库账号需要对目标 schema 具备建表、建索引、查询和增删改权限。应用启动时会幂等创建或升级表结构，并为旧项目补齐数据库分享标识。
+数据库账号需要对 `margin` schema 具备建表、建索引、查询和增删改权限。表结构只由 `migrations/` 中的有序 SQL 管理；应用启动时会按文件名顺序执行未应用的迁移。连接池上限在程序内硬限制为 4。
+
+## SSO 与数据归属
+
+前端从统一登录中心接收 URL fragment 中的 token，保存后立即清除 fragment。所有 `/api/` 请求都必须带 `Authorization: Bearer <token>`。后端不解析 token，只调用 `LOGIN_CENTER_BASE/api/me` 确认身份，结果最多缓存 60 秒。所有用户业务表以返回的 `id` 作为 `owner_user_id`，管理员也不例外。
+
+旧版匿名数据没有可靠的用户归属，因此不会自动从 `public` schema 复制到 `margin`，以免在公司库误碰同名表。如需保留旧数据，应先确认每批数据对应的登录中心用户 ID，再做一次性、经人工复核的迁移。
+
+GitHub Pages 只作为跳转入口。在 GitHub 仓库的 Actions variables 中配置 `APP_PUBLIC_URL`，Pages 构建会用该值生成跳转页；更换公司域名时只需改这一个变量。
 
 ## 不使用 Docker
 
@@ -78,33 +90,8 @@ npm test
 npm run test:coverage
 ```
 
-随后依次打开三个页面，验证项目修改互相可见、规则保存后重新计算、竞品分析结果重启后仍存在、小站点方案记录在另一浏览器可读取。服务器部署流程不要执行 `npm run build:pages`；GitHub Actions 的 Pages 工作流会单独生成 Pages 发布文件。
+随后依次打开三个页面，验证项目修改互相可见、规则保存后重新计算、竞品分析结果重启后仍存在、小站点方案记录在另一浏览器可读取。服务器部署流程不要执行 `npm run build:pages`；GitHub Actions 会单独生成 Pages 跳转页。
 
-## GitHub Pages 飞书内嵌入口
+## GitHub Pages 跳转入口
 
-GitHub Pages 的飞书卡片入口为：
-
-```text
-https://ciksn.github.io/amazon-profit-calculator/embed.html
-```
-
-Pages 只托管当前服务器版本的前端资源。卡片的数据、利润计算、竞品分析和 AI 请求仍发送到 `https://www.200392.xyz`。
-
-服务器生产环境必须包含精确的 Pages Origin：
-
-```text
-CORS_ORIGINS=https://ciksn.github.io
-```
-
-如果还需要允许其他前端域名，使用英文逗号分隔，不能填写带仓库路径的 URL。修改服务器环境变量后需重新创建应用容器或重启 Node 进程，使配置生效。
-
-Pages 工作流会在发布时执行 `npm ci` 和 `npm run build:pages`，不会继续上传仓库中历史遗留的旧卡片。默认 API 地址为 `https://www.200392.xyz`，也可在 GitHub 仓库 Actions Variables 中设置 `MARGINGO_PAGES_API_BASE` 覆盖；该变量必须是没有路径、查询参数或片段的 HTTPS Origin。
-
-从指定分支手动覆盖 Pages：
-
-```text
-gh workflow run deploy-pages.yml --ref codex/pages-live-backend
-```
-
-发布后检查 `embed-config.js` 指向正式后端，并使用 Origin `https://ciksn.github.io` 对 `/api/health` 执行预检，确认响应包含 `Access-Control-Allow-Origin: https://ciksn.github.io`。
-
+GitHub Pages 不直接承载业务界面或连接 API，只跳转到 `APP_PUBLIC_URL`。在 GitHub 仓库 Actions Variables 中设置 `APP_PUBLIC_URL`；更换域名时只需修改这一个值后重新运行 Pages 工作流。

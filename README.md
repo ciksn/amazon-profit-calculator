@@ -43,7 +43,7 @@ $env:GEMINI_KEY_ENCRYPTION_KEY='加密脚本显示的主密钥'
 npm.cmd start
 ```
 
-打开：<http://127.0.0.1:4173>。服务端直接连接 `127.0.0.1:5432` 上的本地 PostgreSQL。首次启动会自动建表，并从固定规则快照初始化国家、佣金、尺寸、FBA 和头程规则；已有数据库不会被覆盖。
+打开 `http://127.0.0.1:<PORT>`（示例配置为 8080）。服务端通过 `DATABASE_URL` 连接 PostgreSQL，按 `migrations/` 中的 SQL 初始化专属 `margin` schema，并从固定规则快照初始化国家、佣金、尺寸、FBA 和头程规则。页面登录与回跳地址分别由 `LOGIN_CENTER_BASE` 和 `APP_PUBLIC_URL` 提供。
 
 `GET /api/health` 可用于确认服务端与本地数据库连接正常。
 
@@ -52,7 +52,7 @@ npm.cmd start
 先确认 Codex CLI 已安装、已完成登录并可从 `PATH` 运行。默认不需要设置 `CODEX_COMMAND`：Windows 会从 `PATH` 中的官方 npm 包自动解析对应架构的原生 `codex.exe`，并直接启动它（不经过 shell）。只有在需要覆盖命令时才在 `.env` 中设置 `CODEX_COMMAND`；Windows 的覆盖值必须指向原生 `.exe`，不要指向 `codex.cmd` 或 `codex.ps1`。超时时间可通过 `CODEX_AI_TIMEOUT_MS` 调整。启动服务后打开品类首页创建或选择一个品类，也可以直接访问：
 
 ```text
-http://127.0.0.1:4173/selection-document.html?project=<id>
+http://127.0.0.1:<PORT>/selection-document.html?project=<id>
 ```
 
 AI 助手默认使用本机 Codex App Server。Codex 不可用时会保留输入并显示错误，不会静默切换或调用 OpenAI。只有用户在页面中手动切换到 OpenAI Provider，后续发送才会使用 OpenAI Responses API。`OPENAI_API_KEY` 只能通过 Node 服务端环境变量注入，不得写入 HTML、前端 JavaScript、浏览器存储或 Git；静态 GitHub Pages 页面本身也不会直接连接 Codex 或保存 API Key。

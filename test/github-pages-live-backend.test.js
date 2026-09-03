@@ -8,58 +8,43 @@ const {spawnSync}=require('node:child_process');
 
 const root=path.resolve(__dirname,'..');
 
-function build(apiBase) {
+function build(appPublicUrl){
   const env={...process.env};
-  if (apiBase===undefined) delete env.MARGINGO_PAGES_API_BASE;
-  else env.MARGINGO_PAGES_API_BASE=apiBase;
-  return spawnSync(process.execPath,['scripts/build_github_pages.mjs'],{
-    cwd:root,
-    env,
-    encoding:'utf8'
-  });
+  delete env.MARGINGO_PAGES_API_BASE;
+  if(appPublicUrl===undefined)delete env.APP_PUBLIC_URL;
+  else env.APP_PUBLIC_URL=appPublicUrl;
+  return spawnSync(process.execPath,['scripts/build_github_pages.mjs'],{cwd:root,env,encoding:'utf8'});
 }
 
-test('Pages build generates a live-backed embed without the static API adapter',()=>{
-  const result=build('https://www.200392.xyz');
-  assert.equal(result.status,0,result.stderr || result.stdout);
-
-  const config=fs.readFileSync(path.join(root,'docs','embed-config.js'),'utf8');
-  const html=fs.readFileSync(path.join(root,'docs','embed.html'),'utf8');
-  assert.match(config,/window\.MARGINGO_API_BASE = "https:\/\/www\.200392\.xyz";/);
-  assert.match(config,/window\.MARGINGO_STATIC_MODE = false;/);
-  assert.match(html,/<script src="\.\/embed-config\.js"><\/script>/);
-  assert.doesNotMatch(html,/static-api\.js/);
-  assert.equal(
-    fs.readFileSync(path.join(root,'docs','competitor-import.js'),'utf8'),
-    fs.readFileSync(path.join(root,'public','competitor-import.js'),'utf8')
-  );
-  assert.ok(fs.statSync(path.join(root,'docs','exceljs.min.js')).size>100_000);
-});
-
-test('Pages build connects the single-site card to the live backend',()=>{
-  const result=build('https://www.200392.xyz');
-  assert.equal(result.status,0,result.stderr || result.stdout);
-
-  const html=fs.readFileSync(path.join(root,'docs','site-card.html'),'utf8');
-  assert.match(html,/<script src="\.\/embed-config\.js"><\/script>/);
-  assert.doesNotMatch(html,/static-api\.js/);
-  assert.doesNotMatch(html,/profit-engine\.js/);
-});
-
-test('Pages build rejects a missing or unsafe live API origin',()=>{
-  for (const value of [undefined,'http://www.200392.xyz','https://www.200392.xyz/api']) {
-    const result=build(value);
-    assert.notEqual(result.status,0,`expected build failure for ${String(value)}`);
-    assert.match(`${result.stdout}\n${result.stderr}`,/MARGINGO_PAGES_API_BASE/);
+test('Pages build redirects every public entry to APP_PUBLIC_URL',()=>{
+  const result=build('https://200392.xyz');
+  assert.equal(result.status,0,result.stderr||result.stdout);
+  const targets={
+    'index.html':'https://200392.xyz/',
+    'embed.html':'https://200392.xyz/embed.html',
+    'site-card.html':'https://200392.xyz/site-card.html',
+    'selection-document.html':'https://200392.xyz/selection-document.html'
+  };
+  for(const [filename,target]of Object.entries(targets)){
+    const html=fs.readFileSync(path.join(root,'docs',filename),'utf8');
+    assert.match(html,new RegExp(`location\\.replace\\("${target.replace(/[.]/g,'\\.')}`));
+    assert.doesNotMatch(html,/static-api\.js|embed-config\.js/);
   }
 });
 
-test('Pages workflow builds the live-backed artifact before deployment',()=>{
+test('Pages build rejects missing or unsafe APP_PUBLIC_URL',()=>{
+  for(const value of [undefined,'javascript:alert(1)','https://user:password@example.com']){
+    const result=build(value);
+    assert.notEqual(result.status,0,`expected build failure for ${String(value)}`);
+    assert.match(`${result.stdout}\n${result.stderr}`,/APP_PUBLIC_URL/);
+  }
+});
+
+test('Pages workflow builds redirect artifacts from canonical main',()=>{
   const workflow=fs.readFileSync(path.join(root,'.github','workflows','deploy-pages.yml'),'utf8');
   assert.match(workflow,/actions\/checkout@v4[\s\S]*?with:\s*\n\s+ref:\s*main/);
-  assert.match(workflow,/npm ci/);
   assert.match(workflow,/npm run build:pages/);
-  assert.match(workflow,/MARGINGO_PAGES_API_BASE:/);
-  assert.match(workflow,/vars\.MARGINGO_PAGES_API_BASE/);
-  assert.match(workflow,/https:\/\/www\.200392\.xyz/);
+  assert.match(workflow,/APP_PUBLIC_URL:/);
+  assert.match(workflow,/vars\.APP_PUBLIC_URL/);
+  assert.doesNotMatch(workflow,/MARGINGO_PAGES_API_BASE/);
 });
