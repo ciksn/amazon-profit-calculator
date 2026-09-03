@@ -1,0 +1,173 @@
+CREATE SCHEMA IF NOT EXISTS margin;
+SET search_path TO margin;
+
+CREATE TABLE countries (
+  code TEXT PRIMARY KEY, name TEXT NOT NULL, flag TEXT NOT NULL, currency TEXT NOT NULL, symbol TEXT NOT NULL,
+  cny_per_local DOUBLE PRECISION NOT NULL, vat_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+  tax_rate DOUBLE PRECISION NOT NULL DEFAULT 0, tax_basis TEXT NOT NULL DEFAULT 'none',
+  tax_label TEXT NOT NULL DEFAULT '税费预估', active BOOLEAN NOT NULL DEFAULT TRUE,
+  fba_volume_divisor DOUBLE PRECISION NOT NULL DEFAULT 6000, priority INTEGER NOT NULL DEFAULT 99,
+  tax_note TEXT NOT NULL DEFAULT '', source_note TEXT NOT NULL DEFAULT '', updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE projects (
+  id SERIAL PRIMARY KEY, owner_user_id BIGINT NOT NULL, share_key TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
+  cost_cny DOUBLE PRECISION NOT NULL DEFAULT 0, length DOUBLE PRECISION NOT NULL DEFAULT 0,
+  width DOUBLE PRECISION NOT NULL DEFAULT 0, height DOUBLE PRECISION NOT NULL DEFAULT 0,
+  dimension_unit TEXT NOT NULL DEFAULT 'cm', weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+  weight_unit TEXT NOT NULL DEFAULT 'kg', image_data TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_projects_owner_user_id ON projects(owner_user_id);
+CREATE UNIQUE INDEX idx_projects_share_key ON projects(share_key) WHERE share_key<>'';
+
+CREATE TABLE project_countries (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, owner_user_id BIGINT NOT NULL,
+  country_code TEXT NOT NULL REFERENCES countries(code), selected INTEGER NOT NULL DEFAULT 0,
+  sale_price DOUBLE PRECISION NOT NULL DEFAULT 0, category_text TEXT NOT NULL DEFAULT '', referral_rate_override DOUBLE PRECISION,
+  matched_category TEXT NOT NULL DEFAULT '', matched_referral_rate DOUBLE PRECISION, matched_referral_threshold DOUBLE PRECISION,
+  matched_referral_rate_above DOUBLE PRECISION, matched_referral_minimum DOUBLE PRECISION NOT NULL DEFAULT 0,
+  declaration_ratio DOUBLE PRECISION NOT NULL DEFAULT .15, declared_value_override DOUBLE PRECISION,
+  customs_rate DOUBLE PRECISION NOT NULL DEFAULT 0, consumption_tax_rate DOUBLE PRECISION NOT NULL DEFAULT 10,
+  customs_hs_code TEXT NOT NULL DEFAULT '', customs_origin_country TEXT NOT NULL DEFAULT 'CN',
+  customs_preference TEXT NOT NULL DEFAULT 'unknown', customs_rate_type TEXT NOT NULL DEFAULT '',
+  customs_schedule_date TEXT NOT NULL DEFAULT '', customs_source_url TEXT NOT NULL DEFAULT '', screenshot_name TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(project_id,country_code)
+);
+CREATE INDEX idx_project_countries_owner_user_id ON project_countries(owner_user_id);
+
+CREATE TABLE project_competitors (
+  id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, owner_user_id BIGINT NOT NULL,
+  country_code TEXT NOT NULL REFERENCES countries(code), name TEXT NOT NULL DEFAULT '', sale_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+  cost_cny DOUBLE PRECISION NOT NULL DEFAULT 0, length DOUBLE PRECISION NOT NULL DEFAULT 0, width DOUBLE PRECISION NOT NULL DEFAULT 0,
+  height DOUBLE PRECISION NOT NULL DEFAULT 0, dimension_unit TEXT NOT NULL DEFAULT 'cm', weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+  weight_unit TEXT NOT NULL DEFAULT 'kg', category_text TEXT NOT NULL DEFAULT '', uses_project_defaults INTEGER NOT NULL DEFAULT 1,
+  asin TEXT NOT NULL DEFAULT '', image_url TEXT NOT NULL DEFAULT '', product_url TEXT NOT NULL DEFAULT '', is_fba INTEGER,
+  has_aplus INTEGER, has_video INTEGER, listing_date TEXT NOT NULL DEFAULT '', monthly_sales DOUBLE PRECISION NOT NULL DEFAULT 0,
+  monthly_revenue_local DOUBLE PRECISION NOT NULL DEFAULT 0, monthly_revenue_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+  rating DOUBLE PRECISION, review_count DOUBLE PRECISION NOT NULL DEFAULT 0, competitor_kind TEXT NOT NULL DEFAULT 'standard',
+  source_format TEXT NOT NULL DEFAULT '', source_row INTEGER NOT NULL DEFAULT 0,
+  feature_bullets JSONB NOT NULL DEFAULT '[]'::jsonb, selling_points JSONB NOT NULL DEFAULT '[]'::jsonb,
+  differentiation JSONB NOT NULL DEFAULT '[]'::jsonb, analysis_status TEXT NOT NULL DEFAULT '',
+  analysis_warning TEXT NOT NULL DEFAULT '', analysis_model TEXT NOT NULL DEFAULT '', analysis_at TIMESTAMPTZ,
+  top_reviews JSONB NOT NULL DEFAULT '[]'::jsonb, review_pros JSONB NOT NULL DEFAULT '[]'::jsonb,
+  review_cons JSONB NOT NULL DEFAULT '[]'::jsonb, review_analysis_status TEXT NOT NULL DEFAULT '',
+  review_analysis_source TEXT NOT NULL DEFAULT '', review_analysis_warning TEXT NOT NULL DEFAULT '',
+  review_analysis_model TEXT NOT NULL DEFAULT '', review_analysis_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_project_competitors_owner_user_id ON project_competitors(owner_user_id);
+CREATE INDEX idx_project_competitors_project ON project_competitors(project_id,country_code,id);
+
+CREATE TABLE competitor_review_overviews (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, owner_user_id BIGINT NOT NULL,
+  country_code TEXT NOT NULL REFERENCES countries(code), competitor_kind TEXT NOT NULL DEFAULT 'standard',
+  pros JSONB NOT NULL DEFAULT '[]'::jsonb, cons JSONB NOT NULL DEFAULT '[]'::jsonb,
+  competitor_ids JSONB NOT NULL DEFAULT '[]'::jsonb, success_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT '', analysis_model TEXT NOT NULL DEFAULT '', analysis_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(project_id,country_code,competitor_kind)
+);
+CREATE INDEX idx_competitor_review_overviews_owner_user_id ON competitor_review_overviews(owner_user_id);
+
+CREATE TABLE site_card_records (
+  id TEXT PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, owner_user_id BIGINT NOT NULL,
+  country_code TEXT NOT NULL REFERENCES countries(code), name TEXT NOT NULL DEFAULT '', cost_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+  sale_price DOUBLE PRECISION NOT NULL DEFAULT 0, snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_site_card_records_owner_user_id ON site_card_records(owner_user_id);
+CREATE INDEX idx_site_card_records_scope ON site_card_records(project_id,country_code,created_at,id);
+
+CREATE TABLE selection_documents (
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE, owner_user_id BIGINT NOT NULL,
+  decision_status TEXT NOT NULL DEFAULT '观察中', decision_reason TEXT NOT NULL DEFAULT '', positioning TEXT NOT NULL DEFAULT '',
+  use_scenarios TEXT NOT NULL DEFAULT '', competitive_points TEXT NOT NULL DEFAULT '',
+  differentiation_items JSONB NOT NULL DEFAULT '[]'::jsonb, review_issues JSONB NOT NULL DEFAULT '[]'::jsonb,
+  overview_summary TEXT NOT NULL DEFAULT '', competitor_summary TEXT NOT NULL DEFAULT '', supplier_summary TEXT NOT NULL DEFAULT '',
+  patent_notes TEXT NOT NULL DEFAULT '', checklist JSONB NOT NULL DEFAULT '[]'::jsonb, version INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_selection_documents_owner_user_id ON selection_documents(owner_user_id);
+
+CREATE TABLE selection_site_assessments (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, owner_user_id BIGINT NOT NULL,
+  country_code TEXT NOT NULL REFERENCES countries(code), market_average_revenue DOUBLE PRECISION NOT NULL DEFAULT 0,
+  market_average_sales DOUBLE PRECISION NOT NULL DEFAULT 0, new_product_friendliness TEXT NOT NULL DEFAULT '',
+  same_product_performance TEXT NOT NULL DEFAULT '', opportunity_status TEXT NOT NULL DEFAULT '', opportunity_notes TEXT NOT NULL DEFAULT '',
+  certification_required TEXT NOT NULL DEFAULT '', certification_actual TEXT NOT NULL DEFAULT '',
+  supplier_certifications TEXT NOT NULL DEFAULT '', certification_gap TEXT NOT NULL DEFAULT '',
+  certification_gap_cost DOUBLE PRECISION NOT NULL DEFAULT 0, payback_period TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(project_id,country_code)
+);
+CREATE INDEX idx_selection_site_assessments_owner_user_id ON selection_site_assessments(owner_user_id);
+
+CREATE TABLE selection_suppliers (
+  id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, owner_user_id BIGINT NOT NULL,
+  name TEXT NOT NULL DEFAULT '', product_url TEXT NOT NULL DEFAULT '', image_url TEXT NOT NULL DEFAULT '',
+  cost_cny DOUBLE PRECISION NOT NULL DEFAULT 0, moq DOUBLE PRECISION NOT NULL DEFAULT 0,
+  specifications TEXT NOT NULL DEFAULT '', certifications TEXT NOT NULL DEFAULT '', sample_reason TEXT NOT NULL DEFAULT '',
+  pre_sample_score DOUBLE PRECISION, post_sample_score DOUBLE PRECISION, pros TEXT NOT NULL DEFAULT '', cons TEXT NOT NULL DEFAULT '',
+  target_country_code TEXT NOT NULL DEFAULT '', target_sale_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_selection_suppliers_owner_user_id ON selection_suppliers(owner_user_id);
+CREATE INDEX idx_selection_suppliers_project ON selection_suppliers(project_id,id);
+
+CREATE TABLE selection_ai_conversations (
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE, owner_user_id BIGINT NOT NULL,
+  active_provider TEXT NOT NULL DEFAULT 'codex', codex_thread_id TEXT NOT NULL DEFAULT '', openai_state_id TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '', summary_message_id BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_selection_ai_conversations_owner_user_id ON selection_ai_conversations(owner_user_id);
+
+CREATE TABLE selection_ai_messages (
+  id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, owner_user_id BIGINT NOT NULL,
+  role TEXT NOT NULL, provider TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+  error_code TEXT NOT NULL DEFAULT '', error_message TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_selection_ai_messages_owner_user_id ON selection_ai_messages(owner_user_id);
+CREATE INDEX idx_selection_ai_messages_project ON selection_ai_messages(project_id,created_at,id);
+CREATE INDEX idx_selection_ai_messages_summary ON selection_ai_messages(project_id,id);
+
+CREATE TABLE selection_ai_proposals (
+  id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, owner_user_id BIGINT NOT NULL,
+  message_id INTEGER NOT NULL REFERENCES selection_ai_messages(id) ON DELETE CASCADE,
+  base_document_version INTEGER NOT NULL, changes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  status TEXT NOT NULL DEFAULT 'pending', applied_changes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), resolved_at TIMESTAMPTZ
+);
+CREATE INDEX idx_selection_ai_proposals_owner_user_id ON selection_ai_proposals(owner_user_id);
+CREATE INDEX idx_selection_ai_proposals_project ON selection_ai_proposals(project_id,status,id);
+
+CREATE TABLE commission_rules (
+  id INTEGER PRIMARY KEY, country_code TEXT NOT NULL REFERENCES countries(code), parent_category TEXT NOT NULL,
+  keywords TEXT NOT NULL, rate DOUBLE PRECISION NOT NULL, min_price DOUBLE PRECISION, max_price DOUBLE PRECISION,
+  threshold_price DOUBLE PRECISION, rate_above DOUBLE PRECISION, minimum_fee DOUBLE PRECISION NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'estimate', source_note TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE size_tiers (
+  id INTEGER PRIMARY KEY, country_code TEXT NOT NULL REFERENCES countries(code), tier_code TEXT NOT NULL, tier_name TEXT NOT NULL,
+  max_long_cm DOUBLE PRECISION NOT NULL, max_mid_cm DOUBLE PRECISION NOT NULL, max_short_cm DOUBLE PRECISION NOT NULL,
+  min_item_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0, max_item_weight_kg DOUBLE PRECISION NOT NULL,
+  max_volume_weight_kg DOUBLE PRECISION, max_total_cm DOUBLE PRECISION, dimension_mode TEXT NOT NULL DEFAULT 'none',
+  class_weight_mode TEXT NOT NULL DEFAULT 'actual', fee_weight_mode TEXT NOT NULL DEFAULT 'max',
+  status TEXT NOT NULL DEFAULT 'verified', source_note TEXT NOT NULL DEFAULT '', UNIQUE(country_code,tier_code)
+);
+CREATE TABLE fba_rules (
+  id INTEGER PRIMARY KEY, country_code TEXT NOT NULL REFERENCES countries(code), size_name TEXT NOT NULL,
+  size_tier TEXT NOT NULL DEFAULT '', max_long_cm DOUBLE PRECISION NOT NULL, max_mid_cm DOUBLE PRECISION NOT NULL,
+  max_short_cm DOUBLE PRECISION NOT NULL, max_weight_kg DOUBLE PRECISION NOT NULL, max_total_cm DOUBLE PRECISION,
+  included_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0, base_fee DOUBLE PRECISION NOT NULL,
+  per_kg_fee DOUBLE PRECISION NOT NULL DEFAULT 0, surcharge_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+  weight_increment_kg DOUBLE PRECISION NOT NULL DEFAULT 0, min_price DOUBLE PRECISION, max_price DOUBLE PRECISION,
+  category_group TEXT NOT NULL DEFAULT 'all', status TEXT NOT NULL DEFAULT 'estimate', source_note TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE freight_rules (
+  id INTEGER PRIMARY KEY, country_code TEXT NOT NULL UNIQUE REFERENCES countries(code), channel_name TEXT NOT NULL DEFAULT '默认渠道',
+  price_per_kg_cny DOUBLE PRECISION NOT NULL DEFAULT 0, pricing_mode TEXT NOT NULL DEFAULT 'kg',
+  price_per_cbm_cny DOUBLE PRECISION NOT NULL DEFAULT 0, min_charge_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+  volume_divisor DOUBLE PRECISION NOT NULL DEFAULT 6000, status TEXT NOT NULL DEFAULT 'missing', source_note TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);

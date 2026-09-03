@@ -29,6 +29,10 @@ jobs:
           node-version: 24
       - name: Update Japan Customs tariff snapshot
         run: node scripts/update_japan_tariff.mjs
+      - name: Build redirect page
+        run: npm run build:pages
+        env:
+          APP_PUBLIC_URL: ${{ vars.APP_PUBLIC_URL }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

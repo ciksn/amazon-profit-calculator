@@ -3,9 +3,13 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname,'..');
 const docs = path.join(root,'docs');
 const dataDir = path.join(docs,'data');
+const appPublicUrl=process.env.APP_PUBLIC_URL;
+if(!appPublicUrl)throw new Error('GitHub Pages 构建缺少 APP_PUBLIC_URL');
+const redirectTarget=new URL(appPublicUrl);
+if(!['http:','https:'].includes(redirectTarget.protocol))throw new Error('APP_PUBLIC_URL 必须是 HTTP(S) 地址');
 fs.mkdirSync(dataDir,{ recursive:true });
 
-for (const name of ['styles.css','ui-fixes.css','admin.css','dimensions.js','app.js','embed.css','embed.js','site-card.css','site-card.js','selection-document.css','selection-document.js','selection-ai.css','selection-ai.js']) {
+for (const name of ['styles.css','ui-fixes.css','admin.css','auth.css','auth.js','dimensions.js','app.js','embed.css','embed.js','site-card.css','site-card.js','selection-document.css','selection-document.js','selection-ai.css','selection-ai.js']) {
   fs.copyFileSync(path.join(root,'public',name),path.join(docs,name));
 }
 fs.copyFileSync(path.join(root,'pages-src','static-api.js'),path.join(docs,'static-api.js'));
@@ -25,6 +29,18 @@ let selectionDocumentHtml = fs.readFileSync(path.join(root,'public','selection-d
 selectionDocumentHtml = selectionDocumentHtml.replace('<script src="./config.js"></script>','<script src="./config.js"></script>\n  <script src="./profit-engine.js"></script>\n  <script src="./static-api.js"></script>');
 fs.writeFileSync(path.join(docs,'selection-document.html'),selectionDocumentHtml);
 fs.writeFileSync(path.join(docs,'.nojekyll'),'');
+
+function writeRedirect(filename,targetUrl){
+  const target=JSON.stringify(targetUrl.href);
+  fs.writeFileSync(path.join(docs,filename),`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>正在打开利润率测算工具</title><script>location.replace(${target})</script></head>
+<body><p>正在打开利润率测算工具……</p></body></html>\n`);
+}
+writeRedirect('index.html',redirectTarget);
+for(const filename of ['embed.html','site-card.html','selection-document.html']){
+  writeRedirect(filename,new URL(filename,`${redirectTarget.href.replace(/\/$/,'')}/`));
+}
 
 let profit = fs.readFileSync(path.join(root,'lib','profit.js'),'utf8');
 profit = profit.replace(/^'use strict';\s*/,'').replace(/module\.exports\s*=\s*\{([^}]+)\};\s*$/s,'window.MarginGoProfit = {$1};');

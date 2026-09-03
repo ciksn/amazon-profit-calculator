@@ -5,6 +5,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const db = require('./lib/db');
+const {bearerToken,createSsoVerifier}=require('./lib/sso');
+const {requestContext,currentUser,currentOwnerId}=require('./lib/request-context');
 const { calculateProfit,findSalePriceForProfitRate } = require('./lib/profit');
 const { lookupJapanTariff } = require('./lib/japan-tariff');
 const competitorAnalysis = require('./lib/competitor-analysis');
@@ -21,10 +23,9 @@ const {
   validateSupplierInput,
   competitorRevenue
 }=require('./lib/selection-document');
-const PORT = Number(process.env.PORT || 4173);
+const PORT = Number(process.env.PORT || 8080);
 const publicDir = path.join(__dirname,'public');
 const excelJsBrowserFile = require.resolve('exceljs/dist/exceljs.min.js');
-
 function json(res,status,body) {
   res.writeHead(status,{ 'Content-Type':'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
@@ -36,7 +37,7 @@ function applyCors(req,res) {
   const allowed=String(process.env.CORS_ORIGINS || '').split(',').map((item)=>item.trim()).filter(Boolean);
   if (allowed.includes('*') || allowed.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');
-    res.setHeader('Access-Control-Allow-Headers','Content-Type,X-Workspace-Key');
+    res.setHeader('Access-Control-Allow-Headers','Content-Type,Authorization,X-Workspace-Key');
     res.setHeader('Access-Control-Allow-Methods','GET,POST,PUT,DELETE,OPTIONS');
   }
 }
@@ -75,14 +76,14 @@ async function matchCommission(countryCode,text,salePrice=0) {
 }
 
 async function getProject(id) {
-  const project=await db.one('SELECT * FROM projects WHERE id = $1',[id]);
+  const project=await db.one('SELECT * FROM projects WHERE id = $1 AND owner_user_id = $2',[id,currentOwnerId()]);
   if (!project) return null;
   project.listings=await db.many(`SELECT pc.*,c.name AS country_name,c.flag,c.currency,c.symbol,
       f.id AS freight_rule_id,f.pricing_mode AS freight_pricing_mode,
       f.price_per_kg_cny AS freight_price_per_kg_cny,f.price_per_cbm_cny AS freight_price_per_cbm_cny
     FROM project_countries pc JOIN countries c ON c.code=pc.country_code
     LEFT JOIN freight_rules f ON f.country_code=pc.country_code
-    WHERE pc.project_id=$1 AND c.active=TRUE ORDER BY c.priority`,[id]);
+    WHERE pc.project_id=$1 AND pc.owner_user_id=$2 AND c.active=TRUE ORDER BY c.priority`,[id,currentOwnerId()]);
   for (const listing of project.listings) {
     if (listing.referral_rate_override != null || !listing.category_text) continue;
     const matched=await matchCommission(listing.country_code,listing.category_text,listing.sale_price);
@@ -130,7 +131,7 @@ async function calculateCompetitor(row) {
 }
 
 async function listCompetitors(projectId,kind='standard') {
-  const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 ORDER BY country_code,monthly_revenue_local DESC,id',[projectId,kind]);
+  const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 AND owner_user_id=$3 ORDER BY country_code,monthly_revenue_local DESC,id',[projectId,kind,currentOwnerId()]);
   const perCountry={};const visible=rows.filter((row)=>(perCountry[row.country_code]=(perCountry[row.country_code]||0)+1)<=5);
   return Promise.all(visible.map(calculateCompetitor));
 }
@@ -141,15 +142,16 @@ function validated(validator,body,...args) {
 }
 
 async function ensureSelectionDocument(projectId) {
-  const existing=await db.one('SELECT * FROM selection_documents WHERE project_id=$1',[projectId]);
-  if (existing) return existing;
-  const project=await db.one('SELECT id FROM projects WHERE id=$1',[projectId]);
+  const project=await getProject(projectId);
   if (!project) return null;
+  const existing=await db.one('SELECT * FROM selection_documents WHERE project_id=$1 AND owner_user_id=$2',[projectId,currentOwnerId()]);
+  if (existing) return existing;
   const defaults=defaultDocument(projectId);
   return db.one(`INSERT INTO selection_documents
-    (project_id,decision_status,checklist,version,updated_at)
-    VALUES ($1,$2,$3,0,'') ON CONFLICT (project_id) DO UPDATE SET project_id=EXCLUDED.project_id
-    RETURNING *`,[projectId,defaults.decision_status,JSON.stringify(DEFAULT_CHECKLIST)]);
+    (project_id,owner_user_id,decision_status,checklist,version,updated_at)
+    VALUES ($1,$2,$3,$4,0,now()) ON CONFLICT (project_id) DO UPDATE SET project_id=EXCLUDED.project_id
+    WHERE selection_documents.owner_user_id=EXCLUDED.owner_user_id
+    RETURNING *`,[projectId,currentOwnerId(),defaults.decision_status,JSON.stringify(DEFAULT_CHECKLIST)]);
 }
 
 async function calculateSelectionListing(project,listing,costCny,salePrice) {
@@ -191,8 +193,8 @@ async function selectionDocumentPayload(projectId) {
   const document=await ensureSelectionDocument(projectId);
   const [countries,siteRows,supplierRows,standardRows,similarRows,standardOverviews,similarOverviews]=await Promise.all([
     db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority'),
-    db.many('SELECT * FROM selection_site_assessments WHERE project_id=$1',[projectId]),
-    db.many('SELECT * FROM selection_suppliers WHERE project_id=$1 ORDER BY id',[projectId]),
+    db.many('SELECT * FROM selection_site_assessments WHERE project_id=$1 AND owner_user_id=$2',[projectId,currentOwnerId()]),
+    db.many('SELECT * FROM selection_suppliers WHERE project_id=$1 AND owner_user_id=$2 ORDER BY id',[projectId,currentOwnerId()]),
     listCompetitors(projectId,'standard'),
     listCompetitors(projectId,'similar'),
     reviewOverviews(projectId,'standard'),
@@ -242,7 +244,7 @@ async function selectionDocumentPayload(projectId) {
 }
 
 async function competitorCounts(projectId,kind='standard') {
-  const rows=await db.many('SELECT country_code,COUNT(*)::int AS count FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 GROUP BY country_code',[projectId,kind]);
+  const rows=await db.many('SELECT country_code,COUNT(*)::int AS count FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 AND owner_user_id=$3 GROUP BY country_code',[projectId,kind,currentOwnerId()]);
   return Object.fromEntries(rows.map((row)=>[row.country_code,row.count]));
 }
 
@@ -252,7 +254,7 @@ function jsonList(value) {
 }
 
 async function reviewOverviews(projectId,kind) {
-  const rows=await db.many('SELECT * FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind=$2 ORDER BY country_code',[projectId,kind]);
+  const rows=await db.many('SELECT * FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind=$2 AND owner_user_id=$3 ORDER BY country_code',[projectId,kind,currentOwnerId()]);
   return Object.fromEntries(rows.map((row)=>[row.country_code,{
     ...row,
     pros:jsonList(row.pros),
@@ -263,21 +265,22 @@ async function reviewOverviews(projectId,kind) {
 
 async function upsertReviewOverview(client,{projectId,countryCode,kind,pros,cons,competitorIds,successCount,status,model,analyzedAt}) {
   await client.query(`INSERT INTO competitor_review_overviews
-    (project_id,country_code,competitor_kind,pros,cons,competitor_ids,success_count,status,analysis_model,analysis_at,updated_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
+    (project_id,owner_user_id,country_code,competitor_kind,pros,cons,competitor_ids,success_count,status,analysis_model,analysis_at,updated_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
     ON CONFLICT (project_id,country_code,competitor_kind) DO UPDATE SET
       pros=EXCLUDED.pros,cons=EXCLUDED.cons,competitor_ids=EXCLUDED.competitor_ids,
       success_count=EXCLUDED.success_count,status=EXCLUDED.status,analysis_model=EXCLUDED.analysis_model,
-      analysis_at=EXCLUDED.analysis_at,updated_at=EXCLUDED.updated_at`,[
-      projectId,countryCode,kind,JSON.stringify(pros),JSON.stringify(cons),JSON.stringify(competitorIds),
+      analysis_at=EXCLUDED.analysis_at,updated_at=EXCLUDED.updated_at
+    WHERE competitor_review_overviews.owner_user_id=EXCLUDED.owner_user_id`,[
+      projectId,currentOwnerId(),countryCode,kind,JSON.stringify(pros),JSON.stringify(cons),JSON.stringify(competitorIds),
       successCount,status,model||'',analyzedAt
     ]);
 }
 
 async function analyzeCompetitorReviews(projectId,countryCode,kind) {
   const rows=await db.many(`SELECT * FROM project_competitors
-    WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3
-    ORDER BY monthly_revenue_local DESC,id LIMIT 5`,[projectId,countryCode,kind]);
+    WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3 AND owner_user_id=$4
+    ORDER BY monthly_revenue_local DESC,id LIMIT 5`,[projectId,countryCode,kind,currentOwnerId()]);
   if(!rows.length){const error=new Error('当前站点没有可分析的竞品');error.statusCode=400;throw error}
   const pendingRows=rows.filter((row)=>row.review_analysis_status!=='complete');
   const existingOverviews=await reviewOverviews(projectId,kind);
@@ -300,9 +303,9 @@ async function analyzeCompetitorReviews(projectId,countryCode,kind) {
         top_reviews=$1,review_pros=$2,review_cons=$3,review_analysis_status=$4,
         review_analysis_source=$5,review_analysis_warning=$6,review_analysis_model=$7,
         review_analysis_at=$8,updated_at=$8
-        WHERE id=$9 AND project_id=$10 AND review_analysis_status<>'complete'`,[
+        WHERE id=$9 AND project_id=$10 AND owner_user_id=$11 AND review_analysis_status<>'complete'`,[
           JSON.stringify(row.topReviews||[]),JSON.stringify(row.pros||[]),JSON.stringify(row.cons||[]),
-          row.status,row.source||'',row.warning||'',result.model||'',analyzedAt,row.id,projectId
+          row.status,row.source||'',row.warning||'',result.model||'',analyzedAt,row.id,projectId,currentOwnerId()
         ]);
       if(row.status==='complete'){
         if(updated.rowCount)newSuccessCount+=1;
@@ -313,8 +316,8 @@ async function analyzeCompetitorReviews(projectId,countryCode,kind) {
       const idPlaceholders=rows.map((_,index)=>`$${index+4}`).join(',');
       const current=(await client.query(`SELECT id,review_pros,review_cons FROM project_competitors
         WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3
-          AND id IN (${idPlaceholders}) AND review_analysis_status='complete'
-        ORDER BY monthly_revenue_local DESC,id`,[projectId,countryCode,kind,...rows.map((row)=>row.id)])).rows;
+          AND id IN (${idPlaceholders}) AND review_analysis_status='complete' AND owner_user_id=$${rows.length+4}
+        ORDER BY monthly_revenue_local DESC,id`,[projectId,countryCode,kind,...rows.map((row)=>row.id),currentOwnerId()])).rows;
       const previous=existingOverviews[countryCode];
       const generatedPros=jsonList(result.overview?.pros);
       const generatedCons=jsonList(result.overview?.cons);
@@ -369,7 +372,7 @@ function importedCompetitorValues(body={}) {
 
 async function insertCompetitor(project,countryCode,body={},importedFromExcel=false,client=null,kind='standard') {
   const listing=project.listings.find((item)=>item.country_code===countryCode);const imported=importedCompetitorValues(body);const now=new Date().toISOString();
-  const values={ project_id:project.id,country_code:countryCode,name:imported.name,sale_price:imported.sale_price,
+  const values={ project_id:project.id,owner_user_id:currentOwnerId(),country_code:countryCode,name:imported.name,sale_price:imported.sale_price,
     cost_cny:Number(body.cost_cny??project.cost_cny)||0,
     length:importedFromExcel?imported.length:Number(body.length??project.length)||0,
     width:importedFromExcel?imported.width:Number(body.width??project.width)||0,
@@ -388,7 +391,7 @@ async function insertCompetitor(project,countryCode,body={},importedFromExcel=fa
 async function bootstrap() {
   const [countries,projects,fba,freightMissing,commission]=await Promise.all([
     db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority'),
-    db.many('SELECT * FROM projects ORDER BY updated_at DESC,id DESC'),
+    db.many('SELECT * FROM projects WHERE owner_user_id=$1 ORDER BY updated_at DESC,id DESC',[currentOwnerId()]),
     db.one('SELECT COUNT(*)::int AS n FROM fba_rules f JOIN countries c ON c.code=f.country_code WHERE c.active=TRUE'),
     db.one("SELECT COUNT(*)::int AS n FROM freight_rules f JOIN countries c ON c.code=f.country_code WHERE c.active=TRUE AND f.status='missing'"),
     db.one('SELECT COUNT(*)::int AS n FROM commission_rules r JOIN countries c ON c.code=r.country_code WHERE c.active=TRUE')
@@ -411,10 +414,10 @@ async function createProject(body) {
   const requestedShareKey=String(body.share_key||'').trim();
   const shareKey=/^[A-Za-z0-9_-]{8,120}$/.test(requestedShareKey)?requestedShareKey:crypto.randomUUID();
   const project=await db.one(`INSERT INTO projects
-    (share_key,name,cost_cny,length,width,height,dimension_unit,weight,weight_unit,created_at,updated_at)
-    VALUES ($1,$2,0,0,0,0,'cm',0,'kg',$3,$3) RETURNING *`,[shareKey,body.name || '未命名品类',now]);
-  await db.query(`INSERT INTO project_countries(project_id,country_code,selected)
-    SELECT $1::integer,code,CASE WHEN code='AU' THEN 1 ELSE 0 END FROM countries`,[project.id]);
+    (owner_user_id,share_key,name,cost_cny,length,width,height,dimension_unit,weight,weight_unit,created_at,updated_at)
+    VALUES ($1,$2,$3,0,0,0,0,'cm',0,'kg',$4,$4) RETURNING *`,[currentOwnerId(),shareKey,body.name || '未命名品类',now]);
+  await db.query(`INSERT INTO project_countries(project_id,owner_user_id,country_code,selected)
+    SELECT $1::integer,$2::bigint,code,CASE WHEN code='AU' THEN 1 ELSE 0 END FROM countries`,[project.id,currentOwnerId()]);
   return getProject(project.id);
 }
 
@@ -431,7 +434,7 @@ async function prepareEmbedRequest(req,res,url) {
 
   const key=workspaceKey(req);
   if (!key) { json(res,401,{ error:'缺少测算实例访问码' });return true; }
-  const row=await db.one('SELECT id FROM projects WHERE share_key=$1',[key]);
+  const row=await db.one('SELECT id FROM projects WHERE share_key=$1 AND owner_user_id=$2',[key,currentOwnerId()]);
   if (!row) { json(res,404,{ error:'测算实例不存在或访问码已失效' });return true; }
   const projectId=Number(row.id);req.embedProjectId=projectId;
 
@@ -450,7 +453,7 @@ async function prepareEmbedRequest(req,res,url) {
   }
   const competitorItem=url.pathname.match(/^\/api\/embed\/competitors\/(\d+)$/);
   if (competitorItem) {
-    const owned=await db.one('SELECT id FROM project_competitors WHERE id=$1 AND project_id=$2',[Number(competitorItem[1]),projectId]);
+    const owned=await db.one('SELECT id FROM project_competitors WHERE id=$1 AND project_id=$2 AND owner_user_id=$3',[Number(competitorItem[1]),projectId,currentOwnerId()]);
     if (!owned) { json(res,404,{ error:'竞品不存在' });return true; }
     url.pathname=`/api/competitors/${competitorItem[1]}`;return false;
   }
@@ -461,7 +464,7 @@ async function prepareEmbedRequest(req,res,url) {
   const recordItem=url.pathname.match(/^\/api\/embed\/site-card-records\/([^/]+)$/);
   if (recordItem) {
     const id=decodeURIComponent(recordItem[1]);
-    const owned=await db.one('SELECT id FROM site_card_records WHERE id=$1 AND project_id=$2',[id,projectId]);
+    const owned=await db.one('SELECT id FROM site_card_records WHERE id=$1 AND project_id=$2 AND owner_user_id=$3',[id,projectId,currentOwnerId()]);
     if (!owned) { json(res,404,{ error:'方案记录不存在' });return true; }
     url.pathname=`/api/site-card-records/${encodeURIComponent(id)}`;return false;
   }
@@ -475,12 +478,13 @@ async function api(req,res,url) {
   }
   const method=req.method;
   if (method==='GET' && url.pathname==='/api/health') { await db.ready();return json(res,200,{ ok:true,database:'postgresql' }); }
+  if (method==='GET' && url.pathname==='/api/me') return json(res,200,currentUser());
   if (method==='GET' && url.pathname==='/api/bootstrap') return json(res,200,await bootstrap());
   if (method==='POST' && url.pathname==='/api/projects') return json(res,201,await createProject(await readBody(req)));
 
   const shareProjectMatch=url.pathname.match(/^\/api\/projects\/by-share-key\/([A-Za-z0-9_-]{8,120})$/);
   if (shareProjectMatch && method==='GET') {
-    const row=await db.one('SELECT id FROM projects WHERE share_key=$1',[shareProjectMatch[1]]);
+    const row=await db.one('SELECT id FROM projects WHERE share_key=$1 AND owner_user_id=$2',[shareProjectMatch[1],currentOwnerId()]);
     if (!row) return json(res,404,{ error:'分享项目不存在' });
     return json(res,200,await getProject(row.id));
   }
@@ -488,10 +492,10 @@ async function api(req,res,url) {
   const siteCardCollectionMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/site-card-records$/);
   if (siteCardCollectionMatch && method==='GET') {
     const projectId=Number(siteCardCollectionMatch[1]);
-    if (!await db.one('SELECT id FROM projects WHERE id=$1',[projectId])) return json(res,404,{ error:'品类不存在' });
+    if (!await getProject(projectId)) return json(res,404,{ error:'品类不存在' });
     const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();
-    const params=[projectId];let where='project_id=$1';
-    if (countryCode) { params.push(countryCode);where+=' AND country_code=$2'; }
+    const params=[projectId,currentOwnerId()];let where='project_id=$1 AND owner_user_id=$2';
+    if (countryCode) { params.push(countryCode);where+=' AND country_code=$3'; }
     const records=await db.many(`SELECT * FROM site_card_records WHERE ${where} ORDER BY created_at,id`,params);
     return json(res,200,{ records });
   }
@@ -501,32 +505,35 @@ async function api(req,res,url) {
     const body=await readBody(req);const countryCode=String(body.country_code||'').toUpperCase();
     if (!project.listings.some((item)=>item.country_code===countryCode)) return json(res,400,{ error:'站点不存在' });
     const requestedId=String(body.id||'').trim();const id=/^[A-Za-z0-9._:-]{1,120}$/.test(requestedId)?requestedId:crypto.randomUUID();
-    const existing=await db.one('SELECT * FROM site_card_records WHERE id=$1',[id]);
-    if (existing) {
-      if (Number(existing.project_id)!==projectId) return json(res,409,{ error:'方案记录 ID 已存在' });
-      return json(res,200,existing);
-    }
+    const ownedExisting=await db.one('SELECT * FROM site_card_records WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
+    if(ownedExisting)return Number(ownedExisting.project_id)===projectId
+      ?json(res,200,ownedExisting)
+      :json(res,409,{error:'方案记录 ID 已存在'});
     const snapshot=body.snapshot&&typeof body.snapshot==='object'&&!Array.isArray(body.snapshot)?body.snapshot:{};
     const now=new Date().toISOString();
     const record=await db.one(`INSERT INTO site_card_records
-      (id,project_id,country_code,name,cost_cny,sale_price,snapshot,created_at,updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) RETURNING *`,[
-      id,projectId,countryCode,String(body.name||'').trim().slice(0,200),Number(body.cost_cny)||0,
+      (id,project_id,owner_user_id,country_code,name,cost_cny,sale_price,snapshot,created_at,updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) ON CONFLICT (id) DO NOTHING RETURNING *`,[
+      id,projectId,currentOwnerId(),countryCode,String(body.name||'').trim().slice(0,200),Number(body.cost_cny)||0,
       Number(body.sale_price)||0,JSON.stringify(snapshot),now]);
-    return json(res,201,record);
+    if(record)return json(res,201,record);
+    const existing=await db.one('SELECT * FROM site_card_records WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
+    return existing&&Number(existing.project_id)===projectId?json(res,200,existing):json(res,409,{error:'方案记录 ID 已存在'});
   }
 
   const siteCardRecordMatch=url.pathname.match(/^\/api\/site-card-records\/([^/]+)$/);
   if (siteCardRecordMatch && method==='PUT') {
     const id=decodeURIComponent(siteCardRecordMatch[1]);const body=await readBody(req);
+    const owned=await db.one('SELECT id FROM site_card_records WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
+    if(!owned)return json(res,404,{error:'方案记录不存在'});
     const allowed=['name','cost_cny','sale_price','snapshot'];const fields=allowed.filter((key)=>Object.hasOwn(body,key));
     const values=fields.map((key)=>key==='name'?String(body[key]||'').trim().slice(0,200):key==='snapshot'?JSON.stringify(body[key]&&typeof body[key]==='object'&&!Array.isArray(body[key])?body[key]:{}):Number(body[key])||0);
-    if (fields.length) { fields.push('updated_at');values.push(new Date().toISOString());await db.query(updateSql('site_card_records',fields,`id=$${fields.length+1}`),[...values,id]); }
-    const record=await db.one('SELECT * FROM site_card_records WHERE id=$1',[id]);
+    if (fields.length) { fields.push('updated_at');values.push(new Date().toISOString());await db.query(updateSql('site_card_records',fields,`id=$${fields.length+1} AND owner_user_id=$${fields.length+2}`),[...values,id,currentOwnerId()]); }
+    const record=await db.one('SELECT * FROM site_card_records WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
     return record?json(res,200,record):json(res,404,{ error:'方案记录不存在' });
   }
   if (siteCardRecordMatch && method==='DELETE') {
-    const result=await db.query('DELETE FROM site_card_records WHERE id=$1',[decodeURIComponent(siteCardRecordMatch[1])]);
+    const result=await db.query('DELETE FROM site_card_records WHERE id=$1 AND owner_user_id=$2',[decodeURIComponent(siteCardRecordMatch[1]),currentOwnerId()]);
     return result.rowCount?json(res,200,{ ok:true }):json(res,404,{ error:'方案记录不存在' });
   }
 
@@ -546,26 +553,27 @@ async function api(req,res,url) {
     const assignments=fields.map((field,index)=>`${field}=$${index+1}`);
     assignments.push(`version=version+1`,`updated_at=$${fields.length+1}`);
     const result=await db.query(`UPDATE selection_documents SET ${assignments.join(',')}
-      WHERE project_id=$${fields.length+2} AND version=$${fields.length+3}`,
-      [...values,now,projectId,body.version]);
+      WHERE project_id=$${fields.length+2} AND version=$${fields.length+3} AND owner_user_id=$${fields.length+4}`,
+      [...values,now,projectId,body.version,currentOwnerId()]);
     if (!result.rowCount) return json(res,409,{error:'数据已被他人更新，请刷新后再编辑'});
-    return json(res,200,await db.one('SELECT * FROM selection_documents WHERE project_id=$1',[projectId]));
+    return json(res,200,await db.one('SELECT * FROM selection_documents WHERE project_id=$1 AND owner_user_id=$2',[projectId,currentOwnerId()]));
   }
 
   const selectionSiteMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/selection-document\/sites\/([A-Z]{2})$/);
   if (selectionSiteMatch && method==='PUT') {
     const projectId=Number(selectionSiteMatch[1]);const countryCode=selectionSiteMatch[2];
-    if (!await db.one('SELECT id FROM projects WHERE id=$1',[projectId])) return json(res,404,{error:'品类不存在'});
+    if (!await getProject(projectId)) return json(res,404,{error:'品类不存在'});
     if (!await db.one('SELECT code FROM countries WHERE code=$1 AND active=TRUE',[countryCode])) return json(res,400,{error:'站点不存在'});
     const body=validated(validateSiteInput,await readBody(req));
     const fields=Object.keys(body);const now=new Date().toISOString();
-    await db.query(`INSERT INTO selection_site_assessments (project_id,country_code,updated_at)
-      VALUES ($1,$2,$3) ON CONFLICT (project_id,country_code) DO UPDATE SET updated_at=EXCLUDED.updated_at`,
-      [projectId,countryCode,now]);
+    await db.query(`INSERT INTO selection_site_assessments (project_id,owner_user_id,country_code,updated_at)
+      VALUES ($1,$2,$3,$4) ON CONFLICT (project_id,country_code) DO UPDATE SET updated_at=EXCLUDED.updated_at
+      WHERE selection_site_assessments.owner_user_id=EXCLUDED.owner_user_id`,
+      [projectId,currentOwnerId(),countryCode,now]);
     if (fields.length) await db.query(updateSql('selection_site_assessments',[...fields,'updated_at'],
-      `project_id=$${fields.length+2} AND country_code=$${fields.length+3}`),
-      [...fields.map((field)=>body[field]),now,projectId,countryCode]);
-    return json(res,200,await db.one('SELECT * FROM selection_site_assessments WHERE project_id=$1 AND country_code=$2',[projectId,countryCode]));
+      `project_id=$${fields.length+2} AND country_code=$${fields.length+3} AND owner_user_id=$${fields.length+4}`),
+      [...fields.map((field)=>body[field]),now,projectId,countryCode,currentOwnerId()]);
+    return json(res,200,await db.one('SELECT * FROM selection_site_assessments WHERE project_id=$1 AND country_code=$2 AND owner_user_id=$3',[projectId,countryCode,currentOwnerId()]));
   }
 
   const selectionSupplierCollectionMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/selection-document\/suppliers$/);
@@ -578,28 +586,28 @@ async function api(req,res,url) {
     }
     const now=new Date().toISOString();
     const row=await db.one(`INSERT INTO selection_suppliers
-      (project_id,${SUPPLIER_FIELDS.join(',')},created_at,updated_at)
-      VALUES ($1,${SUPPLIER_FIELDS.map((_,index)=>`$${index+2}`).join(',')},$${SUPPLIER_FIELDS.length+2},$${SUPPLIER_FIELDS.length+2})
-      RETURNING *`,[projectId,...SUPPLIER_FIELDS.map((field)=>body[field]),now]);
+      (project_id,owner_user_id,${SUPPLIER_FIELDS.join(',')},created_at,updated_at)
+      VALUES ($1,$2,${SUPPLIER_FIELDS.map((_,index)=>`$${index+3}`).join(',')},$${SUPPLIER_FIELDS.length+3},$${SUPPLIER_FIELDS.length+3})
+      RETURNING *`,[projectId,currentOwnerId(),...SUPPLIER_FIELDS.map((field)=>body[field]),now]);
     return json(res,201,await calculateSelectionSupplier(row,project));
   }
 
   const selectionSupplierMatch=url.pathname.match(/^\/api\/selection-suppliers\/(\d+)$/);
   if (selectionSupplierMatch && method==='PUT') {
-    const id=Number(selectionSupplierMatch[1]);const existing=await db.one('SELECT * FROM selection_suppliers WHERE id=$1',[id]);
+    const id=Number(selectionSupplierMatch[1]);const existing=await db.one('SELECT * FROM selection_suppliers WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
     if (!existing) return json(res,404,{error:'供应商不存在'});
     const body=validated(validateSupplierInput,await readBody(req),true);
     if (body.target_country_code) {
-      const validCountry=await db.one('SELECT 1 FROM project_countries WHERE project_id=$1 AND country_code=$2',[existing.project_id,body.target_country_code]);
+      const validCountry=await db.one('SELECT 1 FROM project_countries WHERE project_id=$1 AND country_code=$2 AND owner_user_id=$3',[existing.project_id,body.target_country_code,currentOwnerId()]);
       if (!validCountry) return json(res,400,{error:'站点不存在'});
     }
     const fields=Object.keys(body);
     if (fields.length) await db.query(updateSql('selection_suppliers',[...fields,'updated_at'],
-      `id=$${fields.length+2}`),[...fields.map((field)=>body[field]),new Date().toISOString(),id]);
-    return json(res,200,await calculateSelectionSupplier(await db.one('SELECT * FROM selection_suppliers WHERE id=$1',[id])));
+      `id=$${fields.length+2} AND owner_user_id=$${fields.length+3}`),[...fields.map((field)=>body[field]),new Date().toISOString(),id,currentOwnerId()]);
+    return json(res,200,await calculateSelectionSupplier(await db.one('SELECT * FROM selection_suppliers WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()])));
   }
   if (selectionSupplierMatch && method==='DELETE') {
-    const result=await db.query('DELETE FROM selection_suppliers WHERE id=$1',[Number(selectionSupplierMatch[1])]);
+    const result=await db.query('DELETE FROM selection_suppliers WHERE id=$1 AND owner_user_id=$2',[Number(selectionSupplierMatch[1]),currentOwnerId()]);
     return result.rowCount?json(res,200,{ok:true}):json(res,404,{error:'供应商不存在'});
   }
 
@@ -610,29 +618,31 @@ async function api(req,res,url) {
   }
   if (projectMatch && method==='PUT') {
     const id=Number(projectMatch[1]);const body=await readBody(req);
+    if(!await getProject(id))return json(res,404,{error:'品类不存在'});
     const allowed=['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit','image_data'];
     const fields=allowed.filter((key)=>Object.hasOwn(body,key));
     if (fields.length) {
       const setFields=[...fields,'updated_at'];
-      await db.query(updateSql('projects',setFields,`id = $${setFields.length+1}`),
-        [...fields.map((key)=>body[key]),new Date().toISOString(),id]);
+      await db.query(updateSql('projects',setFields,`id = $${setFields.length+1} AND owner_user_id = $${setFields.length+2}`),
+        [...fields.map((key)=>body[key]),new Date().toISOString(),id,currentOwnerId()]);
     }
     const project=await getProject(id);
     return project ? json(res,200,project) : json(res,404,{ error:'品类不存在' });
   }
   if (projectMatch && method==='DELETE') {
-    const result=await db.query('DELETE FROM projects WHERE id=$1',[Number(projectMatch[1])]);
+    const result=await db.query('DELETE FROM projects WHERE id=$1 AND owner_user_id=$2',[Number(projectMatch[1]),currentOwnerId()]);
     return result.rowCount ? json(res,200,{ ok:true }) : json(res,404,{ error:'品类不存在' });
   }
 
   const listingMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/countries\/([A-Z]{2})$/);
   if (listingMatch && method==='PUT') {
     const projectId=Number(listingMatch[1]);const code=listingMatch[2];const body=await readBody(req);
+    if(!await getProject(projectId))return json(res,404,{error:'品类不存在'});
     const allowed=['selected','sale_price','category_text','referral_rate_override','matched_category','matched_referral_rate','matched_referral_threshold','matched_referral_rate_above','matched_referral_minimum','declaration_ratio','declared_value_override','customs_rate','consumption_tax_rate','customs_hs_code','customs_origin_country','customs_preference','customs_rate_type','customs_schedule_date','customs_source_url','screenshot_name'];
     const fields=allowed.filter((key)=>Object.hasOwn(body,key));
-    if (fields.length) await db.query(updateSql('project_countries',fields,`project_id=$${fields.length+1} AND country_code=$${fields.length+2}`),
-      [...fields.map((key)=>key==='selected' ? Number(Boolean(body[key])) : body[key]),projectId,code]);
-    await db.query('UPDATE projects SET updated_at=$1 WHERE id=$2',[new Date().toISOString(),projectId]);
+    if (fields.length) await db.query(updateSql('project_countries',fields,`project_id=$${fields.length+1} AND country_code=$${fields.length+2} AND owner_user_id=$${fields.length+3}`),
+      [...fields.map((key)=>key==='selected' ? Number(Boolean(body[key])) : body[key]),projectId,code,currentOwnerId()]);
+    await db.query('UPDATE projects SET updated_at=$1 WHERE id=$2 AND owner_user_id=$3',[new Date().toISOString(),projectId,currentOwnerId()]);
     const project=await getProject(projectId);
     return project ? json(res,200,project) : json(res,404,{ error:'品类不存在' });
   }
@@ -648,12 +658,12 @@ async function api(req,res,url) {
     await db.transaction(async (client)=>{
       for (const source of rows) {
         const row=importedCompetitorValues(source);let existing=null;
-        if (row.asin) existing=(await client.query('SELECT id FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3 AND UPPER(asin)=$4 ORDER BY id LIMIT 1',[projectId,countryCode,kind,row.asin])).rows[0]||null;
-        if (!existing&&row.product_url) existing=(await client.query("SELECT id FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3 AND product_url=$4 AND product_url<>'' ORDER BY id LIMIT 1",[projectId,countryCode,kind,row.product_url])).rows[0]||null;
+        if (row.asin) existing=(await client.query('SELECT id FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3 AND UPPER(asin)=$4 AND owner_user_id=$5 ORDER BY id LIMIT 1',[projectId,countryCode,kind,row.asin,currentOwnerId()])).rows[0]||null;
+        if (!existing&&row.product_url) existing=(await client.query("SELECT id FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3 AND product_url=$4 AND product_url<>'' AND owner_user_id=$5 ORDER BY id LIMIT 1",[projectId,countryCode,kind,row.product_url,currentOwnerId()])).rows[0]||null;
         if (existing) {
           const fields=['name','sale_price',...competitorImportFields,...competitorParameterImportFields,'uses_project_defaults','updated_at'];
-          const values=[row.name,row.sale_price,...competitorImportFields.map((key)=>row[key]),...competitorParameterImportFields.map((key)=>row[key]),0,new Date().toISOString(),existing.id];
-          await client.query(updateSql('project_competitors',fields,`id=$${fields.length+1}`),values);updated+=1;
+          const values=[row.name,row.sale_price,...competitorImportFields.map((key)=>row[key]),...competitorParameterImportFields.map((key)=>row[key]),0,new Date().toISOString(),existing.id,currentOwnerId()];
+          await client.query(updateSql('project_competitors',fields,`id=$${fields.length+1} AND owner_user_id=$${fields.length+2}`),values);updated+=1;
         } else { await insertCompetitor(project,countryCode,row,true,client,kind);created+=1; }
       }
     });
@@ -677,7 +687,7 @@ async function api(req,res,url) {
     if (!project) return json(res,404,{ error:'品类不存在' });
     const body=await readBody(req);const countryCode=String(body.country_code||'').toUpperCase();
     if (!project.listings.some((item)=>item.country_code===countryCode)) return json(res,400,{ error:'站点不存在' });
-    const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3 ORDER BY monthly_revenue_local DESC,id LIMIT 5',[projectId,countryCode,kind]);
+    const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind=$3 AND owner_user_id=$4 ORDER BY monthly_revenue_local DESC,id LIMIT 5',[projectId,countryCode,kind,currentOwnerId()]);
     if (!rows.length) return json(res,400,{ error:'当前站点没有可分析的竞品' });
     const manualById=new Map();
     if(Array.isArray(body.manual_rows))for(const source of body.manual_rows){
@@ -696,8 +706,8 @@ async function api(req,res,url) {
     const result=await competitorAnalysis.analyzeCompetitorBatch(pendingRows);const analyzedAt=new Date().toISOString();
     await db.transaction(async(client)=>{
       for(const row of result.rows) await client.query(`UPDATE project_competitors SET feature_bullets=$1,selling_points=$2,differentiation=$3,
-        analysis_status=$4,analysis_warning=$5,analysis_model=$6,analysis_at=$7,updated_at=$7 WHERE id=$8 AND project_id=$9`,[
-        JSON.stringify(row.featureBullets),JSON.stringify(row.sellingPoints),JSON.stringify(row.differentiation),row.status,row.warning||'',result.model,analyzedAt,row.id,projectId]);
+        analysis_status=$4,analysis_warning=$5,analysis_model=$6,analysis_at=$7,updated_at=$7 WHERE id=$8 AND project_id=$9 AND owner_user_id=$10`,[
+        JSON.stringify(row.featureBullets),JSON.stringify(row.sellingPoints),JSON.stringify(row.differentiation),row.status,row.warning||'',result.model,analyzedAt,row.id,projectId,currentOwnerId()]);
     });
     return json(res,200,{country_code:countryCode,analyzed:result.rows.filter((row)=>row.status==='complete').length,total:rows.length,attempted:result.rows.length,skipped,
       warnings:result.rows.filter((row)=>row.warning).map((row)=>({id:row.id,message:row.warning})),model:result.model});
@@ -725,12 +735,12 @@ async function api(req,res,url) {
     const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();
     const result=countryCode
       ? await db.transaction(async(client)=>{
-        const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='standard'",[projectId,countryCode]);
-        await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND country_code=$2 AND competitor_kind='standard'",[projectId,countryCode]);return deleted;
+        const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='standard' AND owner_user_id=$3",[projectId,countryCode,currentOwnerId()]);
+        await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND country_code=$2 AND competitor_kind='standard' AND owner_user_id=$3",[projectId,countryCode,currentOwnerId()]);return deleted;
       })
       : await db.transaction(async(client)=>{
-        const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND competitor_kind='standard'",[projectId]);
-        await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind='standard'",[projectId]);return deleted;
+        const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND competitor_kind='standard' AND owner_user_id=$2",[projectId,currentOwnerId()]);
+        await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind='standard' AND owner_user_id=$2",[projectId,currentOwnerId()]);return deleted;
       });
     return json(res,200,{ ok:true,deleted:result.rowCount });
   }
@@ -746,11 +756,11 @@ async function api(req,res,url) {
     const projectId=Number(similarListMatch[1]);if(!await getProject(projectId))return json(res,404,{error:'品类不存在'});
     const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();
     const result=countryCode?await db.transaction(async(client)=>{
-      const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='similar'",[projectId,countryCode]);
-      await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND country_code=$2 AND competitor_kind='similar'",[projectId,countryCode]);return deleted;
+      const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND country_code=$2 AND competitor_kind='similar' AND owner_user_id=$3",[projectId,countryCode,currentOwnerId()]);
+      await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND country_code=$2 AND competitor_kind='similar' AND owner_user_id=$3",[projectId,countryCode,currentOwnerId()]);return deleted;
     }):await db.transaction(async(client)=>{
-      const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND competitor_kind='similar'",[projectId]);
-      await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind='similar'",[projectId]);return deleted;
+      const deleted=await client.query("DELETE FROM project_competitors WHERE project_id=$1 AND competitor_kind='similar' AND owner_user_id=$2",[projectId,currentOwnerId()]);
+      await client.query("DELETE FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind='similar' AND owner_user_id=$2",[projectId,currentOwnerId()]);return deleted;
     });
     return json(res,200,{ok:true,deleted:result.rowCount});
   }
@@ -758,20 +768,22 @@ async function api(req,res,url) {
   const competitorMatch=url.pathname.match(/^\/api\/competitors\/(\d+)$/);
   if (competitorMatch && method==='PUT') {
     const id=Number(competitorMatch[1]);const body=await readBody(req);
+    const owned=await db.one('SELECT id FROM project_competitors WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
+    if(!owned)return json(res,404,{error:'竞品不存在'});
     const allowed=['country_code','name','sale_price','cost_cny','length','width','height','dimension_unit','weight','weight_unit','category_text','uses_project_defaults',...competitorImportFields];
     const fields=allowed.filter((key)=>Object.hasOwn(body,key));
     const parameterFields=['cost_cny','length','width','height','dimension_unit','weight','weight_unit','category_text'];
     if (fields.some((key)=>parameterFields.includes(key)) && !fields.includes('uses_project_defaults')) { body.uses_project_defaults=false;fields.push('uses_project_defaults'); }
     if (fields.length) {
       const setFields=[...fields,'updated_at'];
-      await db.query(updateSql('project_competitors',setFields,`id=$${setFields.length+1}`),
-        [...fields.map((key)=>key==='uses_project_defaults' ? Number(Boolean(body[key])) : body[key]),new Date().toISOString(),id]);
+      await db.query(updateSql('project_competitors',setFields,`id=$${setFields.length+1} AND owner_user_id=$${setFields.length+2}`),
+        [...fields.map((key)=>key==='uses_project_defaults' ? Number(Boolean(body[key])) : body[key]),new Date().toISOString(),id,currentOwnerId()]);
     }
-    const row=await db.one('SELECT * FROM project_competitors WHERE id=$1',[id]);
+    const row=await db.one('SELECT * FROM project_competitors WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
     return row ? json(res,200,await calculateCompetitor(row)) : json(res,404,{ error:'竞品不存在' });
   }
   if (competitorMatch && method==='DELETE') {
-    const result=await db.query('DELETE FROM project_competitors WHERE id=$1',[Number(competitorMatch[1])]);
+    const result=await db.query('DELETE FROM project_competitors WHERE id=$1 AND owner_user_id=$2',[Number(competitorMatch[1]),currentOwnerId()]);
     return result.rowCount ? json(res,200,{ ok:true }) : json(res,404,{ error:'竞品不存在' });
   }
 
@@ -822,13 +834,29 @@ async function api(req,res,url) {
 
 const mime={ '.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml' };
 function staticFile(req,res,url) {
+  if(url.pathname==='/healthz')return json(res,200,{ok:true});
+  if(url.pathname==='/config.js'){
+    const config={
+      apiBase:'',
+      loginCenterBase:String(process.env.LOGIN_CENTER_BASE||''),
+      appPublicUrl:String(process.env.APP_PUBLIC_URL||'')
+    };
+    const script=`window.MARGINGO_API_BASE=${JSON.stringify(config.apiBase)};\nwindow.MARGINGO_LOGIN_CENTER_BASE=${JSON.stringify(config.loginCenterBase)};\nwindow.MARGINGO_APP_PUBLIC_URL=${JSON.stringify(config.appPublicUrl)};\n`;
+    res.writeHead(200,{'Content-Type':mime['.js'],'Cache-Control':'no-store'});
+    return res.end(script);
+  }
   const requestPath=url.pathname==='/' ? '/index.html' : url.pathname;
   const file=requestPath==='/exceljs.min.js' ? excelJsBrowserFile:path.normalize(path.join(publicDir,requestPath));
   if (file!==excelJsBrowserFile && !file.startsWith(publicDir)) { res.writeHead(403);return res.end('Forbidden'); }
   fs.readFile(file,(error,data)=>{ if (error) { res.writeHead(404);return res.end('Not found'); } res.writeHead(200,{ 'Content-Type':mime[path.extname(file)] || 'application/octet-stream' });res.end(data); });
 }
 
-function createServer({selectionAiService,selectionAiServiceFactory=createDefaultSelectionAiService}={}) {
+function createServer({selectionAiService,selectionAiServiceFactory=createDefaultSelectionAiService,authVerifier}={}) {
+  const verifier=authVerifier||(
+    process.env.NODE_ENV==='test'
+      ? {verify:async()=>({id:1,name:'测试用户',roles:[],principal_uid:1})}
+      : createSsoVerifier()
+  );
   let defaultSelectionAiService=null;
   const getSelectionAiService=()=>{
     if (selectionAiService) return selectionAiService;
@@ -843,7 +871,14 @@ function createServer({selectionAiService,selectionAiServiceFactory=createDefaul
   try {
     applyCors(req,res);if (req.method==='OPTIONS') { res.writeHead(204);return res.end(); }
     if (url.pathname.startsWith('/api/')) {
+      let user;
+      try{user=await verifier.verify(bearerToken(req));}
+      catch(error){return json(res,Number(error.statusCode)||401,{error:error.message,code:error.code||'AUTH_INVALID'});}
+      return await requestContext.run({user},async()=>{
       if (url.pathname.match(/^\/api\/projects\/\d+\/selection-ai(?:\/|$)/)) {
+        const projectId=Number(url.pathname.match(/^\/api\/projects\/(\d+)/)?.[1]);
+        const legacyInjectedTest=process.env.NODE_ENV==='test'&&!authVerifier;
+        if(!legacyInjectedTest&&!await getProject(projectId))return json(res,404,{error:'品类不存在'});
         try {
           const handled=await handleSelectionAiRequest({
             req,res,url,service:getSelectionAiService(),readBody,json
@@ -854,6 +889,7 @@ function createServer({selectionAiService,selectionAiServiceFactory=createDefaul
         }
       }
       return await api(req,res,url);
+      });
     }
     return staticFile(req,res,url);
   } catch (error) {

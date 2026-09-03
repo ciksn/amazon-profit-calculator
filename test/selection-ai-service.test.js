@@ -743,7 +743,7 @@ test('conditional document update returns PROPOSAL_CONFLICT when its version pre
     service.applyProposal({projectId:project.id,proposalId:pending.id,changeIndexes:[0]}),
     (error)=>error.code==='PROPOSAL_CONFLICT'
   );
-  assert.equal(queries.some((sql)=>/WHERE project_id=\$\d+ AND version=\$\d+ RETURNING \*/.test(sql)),true);
+  assert.equal(queries.some((sql)=>/WHERE project_id=\$\d+ AND version=\$\d+ AND owner_user_id=\$\d+ RETURNING \*/.test(sql)),true);
   assert.equal((await db.one('SELECT version FROM selection_documents WHERE project_id=$1',[project.id])).version,0);
 });
 

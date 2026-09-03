@@ -24,9 +24,11 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      PORT: 4173
+      PORT: 8080
       DATABASE_URL: postgresql://${POSTGRES_USER:-margingo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-margingo}
-      PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      PG_POOL_MAX: 4
+      LOGIN_CENTER_BASE: ${LOGIN_CENTER_BASE:?请设置 LOGIN_CENTER_BASE}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:?请设置 APP_PUBLIC_URL}
       GEMINI_API_KEY_ENCRYPTED: ${GEMINI_API_KEY_ENCRYPTED:-}
       GEMINI_KEY_ENCRYPTION_KEY: ${GEMINI_KEY_ENCRYPTION_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-lite}
@@ -35,9 +37,9 @@ services:
       GEMINI_HTTPS_PROXY: ${GEMINI_HTTPS_PROXY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
     ports:
-      - "127.0.0.1:${APP_PORT:-4173}:4173"
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 10

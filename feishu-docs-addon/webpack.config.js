@@ -5,7 +5,8 @@ const fs=require('node:fs');
 const webpack=require('webpack');
 const HtmlWebpackPlugin=require('html-webpack-plugin');
 
-const embedUrl=String(process.env.MARGINGO_EMBED_URL||'http://127.0.0.1:4173/embed.html').replace(/\/$/,'');
+const embedUrl=String(process.env.MARGINGO_EMBED_URL||'').replace(/\/$/,'');
+if(!embedUrl)throw new Error('缺少 MARGINGO_EMBED_URL');
 const appConfig=JSON.parse(fs.readFileSync(path.resolve(__dirname,'app.json'),'utf8'));
 
 class FeishuManifestPlugin{
