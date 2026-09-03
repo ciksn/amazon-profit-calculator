@@ -31,14 +31,12 @@ test('主品类卡片提供选品文档入口',()=>{
   assert.match(script,/>选品文档</);
 });
 
-test('静态构建同步选品页面资源并提供独立持久化存储',()=>{
+test('Pages 跳转保留选品页路径，历史静态适配器仍可独立验证',()=>{
   const build=read('scripts/build_github_pages.mjs');
   const staticApi=read('pages-src/static-api.js');
-  assert.match(build,/selection-document\.css/);
-  assert.match(build,/selection-document\.js/);
   assert.match(build,/selection-document\.html/);
-  assert.match(build,/selection-ai\.css/);
-  assert.match(build,/selection-ai\.js/);
+  assert.match(build,/APP_PUBLIC_URL/);
+  assert.match(build,/location\.replace/);
   assert.match(staticApi,/margingo-selection-documents-v1/);
   assert.match(staticApi,/selection-document/);
   assert.match(staticApi,/selection-suppliers/);

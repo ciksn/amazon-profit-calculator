@@ -90,4 +90,8 @@ npm test
 npm run test:coverage
 ```
 
-随后依次打开三个页面，验证项目修改互相可见、规则保存后重新计算、竞品分析结果重启后仍存在、小站点方案记录在另一浏览器可读取。不要执行 `npm run build:pages`，以免生成新的静态 Pages 文件并混淆原线上版本。
+随后依次打开三个页面，验证项目修改互相可见、规则保存后重新计算、竞品分析结果重启后仍存在、小站点方案记录在另一浏览器可读取。服务器部署流程不要执行 `npm run build:pages`；GitHub Actions 会单独生成 Pages 跳转页。
+
+## GitHub Pages 跳转入口
+
+GitHub Pages 不直接承载业务界面或连接 API，只跳转到 `APP_PUBLIC_URL`。在 GitHub 仓库 Actions Variables 中设置 `APP_PUBLIC_URL`；更换域名时只需修改这一个值后重新运行 Pages 工作流。

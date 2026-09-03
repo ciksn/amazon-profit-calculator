@@ -4,8 +4,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  schedule:
-    - cron: '20 18 * * *'
 
 permissions:
   contents: read
@@ -24,12 +22,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Update Japan Customs tariff snapshot
-        run: node scripts/update_japan_tariff.mjs
-      - name: Build redirect page
+      - name: Build redirect pages
         run: npm run build:pages
         env:
           APP_PUBLIC_URL: ${{ vars.APP_PUBLIC_URL }}
