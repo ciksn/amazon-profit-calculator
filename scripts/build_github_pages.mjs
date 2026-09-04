@@ -20,7 +20,7 @@ function writeRedirect(filename,targetUrl){
   fs.writeFileSync(path.join(docs,filename),`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="0;url=${escaped}">
-<title>正在打开利润率测算工具</title><script>location.replace(${target})</script></head>
+<title>正在打开利润率测算工具</title><script>location.replace(${target}+location.search+location.hash)</script></head>
 <body><p>正在打开利润率测算工具……</p></body></html>\n`);
 }
 

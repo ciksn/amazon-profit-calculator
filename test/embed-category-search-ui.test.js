@@ -64,3 +64,16 @@ test('快速连续选择品类时通过队列串行完成整套刷新',()=>{
   assert.match(js,/while\(queuedProjectId!=null\)/);
   assert.match(js,/projectSwitchPromise=runProjectSwitchQueue\(\)\.finally/);
 });
+
+test('每个品类提供文档专属共享链接且共享查看模式不暴露个人清单',()=>{
+  const html=read('public/embed.html');const js=read('public/embed.js');const css=read('public/embed.css');
+  assert.match(html,/id="copyViewLinkBtn"/);
+  assert.match(html,/id="copyEditLinkBtn"/);
+  assert.match(html,/id="shareToggleBtn"/);
+  assert.match(js,/params\.get\('share'\)\|\|hashParams\.get\('key'\)/);
+  assert.match(js,/project\.edit_share_key:project\.share_key/);
+  assert.match(js,/X-Workspace-Key/);
+  assert.match(js,/state\.access\.read_only/);
+  assert.match(css,/\.shared-view \.project-picker/);
+  assert.match(css,/\.shared-readonly #siteTabs \.site-tab/);
+});

@@ -1,10 +1,12 @@
 'use strict';
 
-const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},competitorReviewOverviews:{},similarCompetitors:[],similarCounts:{},similarReviewOverviews:{},activeCompetitorSiteCode:'',activeSimilarSiteCode:'',competitorExpanded:true,competitorStatsExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',importKind:'standard',manualCountryCode:'',manualAnalysisCountryCode:'',manualAnalysisIds:[],manualAnalysisKind:'standard',clearCountryCode:'',clearKind:'standard',analyzingSiteCode:'',similarAnalyzingSiteCode:'',reviewAnalyzingKey:'',reviewOverviewExpanded:{},japanTariffPayload:null,japanTariffSelection:null,shareKey:'',newInstance:false,saving:0,pending:Promise.resolve()};
+const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},competitorReviewOverviews:{},similarCompetitors:[],similarCounts:{},similarReviewOverviews:{},activeCompetitorSiteCode:'',activeSimilarSiteCode:'',competitorExpanded:true,competitorStatsExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',importKind:'standard',manualCountryCode:'',manualAnalysisCountryCode:'',manualAnalysisIds:[],manualAnalysisKind:'standard',clearCountryCode:'',clearKind:'standard',analyzingSiteCode:'',similarAnalyzingSiteCode:'',reviewAnalyzingKey:'',reviewOverviewExpanded:{},japanTariffPayload:null,japanTariffSelection:null,shareKey:'',readOnly:false,access:null,newInstance:false,saving:0,pending:Promise.resolve()};
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
-const widgetMode=new URLSearchParams(location.search).get('widget')==='1';
+const widgetKind=new URLSearchParams(location.search).get('widget')||'';
+const widgetMode=Boolean(widgetKind);
+const widgetSetupMode=widgetKind==='setup';
 const syncChannel='BroadcastChannel' in window?new BroadcastChannel('margingo-project-sync'):null;
 const escapeHtml=(value)=>String(value??'').replace(/[&<>"']/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const number=(value,digits=2)=>Number(value||0).toLocaleString('zh-CN',{maximumFractionDigits:digits});
@@ -37,8 +39,17 @@ function profitInfoIcon(result){
 }
 
 async function api(url,options={}){
-  const target=/^https?:\/\//i.test(url)?url:`${apiBase}${url}`;
-  const response=await fetch(target,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});
+  const scoped=state.shareKey?url
+    .replace(/^\/api\/bootstrap$/,'/api/embed/bootstrap')
+    .replace(/^\/api\/projects\/\d+\/countries\//,'/api/embed/countries/')
+    .replace(/^\/api\/projects\/\d+\/similar-competitors/,'/api/embed/similar-competitors')
+    .replace(/^\/api\/projects\/\d+\/competitors/,'/api/embed/competitors')
+    .replace(/^\/api\/projects\/\d+$/,'/api/embed/project')
+    .replace(/^\/api\/competitors\//,'/api/embed/competitors/')
+    .replace(/^\/api\/calculate$/,'/api/embed/calculate'):url;
+  const target=/^https?:\/\//i.test(scoped)?scoped:`${apiBase}${scoped}`;
+  const workspaceHeaders=state.shareKey&&scoped.startsWith('/api/embed/')?{'X-Workspace-Key':state.shareKey}:{};
+  const response=await fetch(target,{headers:{'Content-Type':'application/json',...workspaceHeaders,...(options.headers||{})},...options});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok){const error=new Error(payload.error||'请求失败');error.status=response.status;throw error}
   if(String(options.method||'GET').toUpperCase()!=='GET'){
@@ -50,6 +61,13 @@ function toast(message){const el=$('#toast');el.textContent=message;el.classList
 function saving(start,error=false){state.saving=Math.max(0,state.saving+(start?1:-1));const el=$('#saveState');el.textContent=error?'保存失败':state.saving?'保存中…':'已保存';el.className=`save-state ${error?'error':state.saving?'saving':''}`}
 function formValue(name){return $(`[name="${name}"]`,$('#productFields')).value}
 async function initialize(){
+  const params=new URLSearchParams(location.search);const hashParams=new URLSearchParams(location.hash.replace(/^#/,''));
+  state.shareKey=params.get('share')||hashParams.get('key')||'';
+  if(state.shareKey){
+    state.bootstrap=await api('/api/bootstrap');state.project=state.bootstrap.project;state.access=state.bootstrap.access||{};state.readOnly=Boolean(state.access.read_only);
+    state.activeCompetitorSiteCode=state.bootstrap.countries[0]?.code||'';state.activeSimilarSiteCode=state.bootstrap.countries[0]?.code||'';
+    fillProduct();await calculate();await loadCompetitors();bindEvents();applyAccessMode();return;
+  }
   state.bootstrap=await api('/api/bootstrap');let project=null;
   const requested=Number(new URLSearchParams(location.search).get('project'));
   if(state.bootstrap.projects.some((item)=>Number(item.id)===requested))project=await api(`/api/projects/${requested}`);
@@ -60,6 +78,52 @@ async function initialize(){
   state.activeSimilarSiteCode=state.bootstrap.countries[0]?.code||'';
   fillProduct();await calculate();await loadCompetitors();bindEvents();
 }
+function applyAccessMode(){
+  if(!state.shareKey)return;
+  document.body.classList.add('shared-view');if(state.readOnly)document.body.classList.add('shared-readonly');
+  const badge=$('#accessBadge');badge.hidden=false;
+  const owner=state.access?.owner_name||'未记录';const current=state.access?.current_user_name||'已登录用户';const permission=state.readOnly?'仅查看':state.access?.permission==='owner'?'归属人':'可编辑';
+  badge.textContent=`归属人：${owner} · 当前用户：${current} · ${permission}`;
+  if(state.readOnly){
+    const disable=(root=document)=>{if(root.matches?.('input,select,textarea'))root.disabled=true;$$('input,select,textarea',root).forEach((control)=>{control.disabled=true})};disable();
+    new MutationObserver((entries)=>entries.forEach((entry)=>entry.addedNodes.forEach((node)=>{if(node.nodeType===1)disable(node)}))).observe(document.body,{childList:true,subtree:true});
+  }
+}
+function widgetParentOrigin(){
+  try{return document.referrer?new URL(document.referrer).origin:''}catch{return ''}
+}
+function renderWidgetSetup(){
+  const panel=$('#widgetSetup');if(!panel)return;panel.hidden=!widgetSetupMode;if(!widgetSetupMode||!state.project)return;
+  $('#widgetSetupHint').textContent=`当前选择“${state.project.name}”。仅查看不会允许修改；可查看并编辑允许本文档中的查看者共同维护这一个品类。`;
+}
+async function bindWidget(permission){
+  if(!widgetSetupMode||!state.project)return;
+  const targetOrigin=widgetParentOrigin();if(!targetOrigin)return toast('无法确认飞书小组件来源，请在文档中刷新后重试');
+  if(!state.project.share_enabled){
+    saving(true);
+    try{state.project=await api(`/api/projects/${state.project.id}`,{method:'PUT',body:JSON.stringify({share_enabled:true})});renderShareControls();saving(false)}
+    catch(error){saving(false,true);return toast(error.message)}
+  }
+  const workspaceKey=permission==='edit'?state.project.edit_share_key:state.project.share_key;
+  if(!workspaceKey)return toast('共享标识尚未生成，请刷新后重试');
+  window.parent.postMessage({type:'margingo:widget-bind',workspaceKey,permission:permission==='edit'?'edit':'view',projectName:state.project.name},targetOrigin);
+  toast(permission==='edit'?'已设为可查看并编辑':'已设为仅查看');
+}
+function shareUrl(permission='view',project=state.project){const url=new URL('embed.html',location.href);url.search='';url.searchParams.set('share',permission==='edit'?project.edit_share_key:project.share_key);url.hash='';return url.href}
+async function copyShareLink(permission){
+  if(!state.project?.share_enabled)return toast('当前项目已关闭共享');
+  const link=shareUrl(permission);let copied=false;
+  try{await navigator.clipboard.writeText(link);copied=true}catch{
+    const helper=document.createElement('textarea');helper.value=link;helper.style.cssText='position:fixed;opacity:0';document.body.append(helper);helper.select();copied=document.execCommand('copy');helper.remove();
+  }
+  const label=permission==='edit'?'可编辑':'仅查看';if(copied)toast(`已复制${label}文档链接`);else window.prompt(`请复制${label}文档链接`,link);
+}
+async function toggleProjectShare(){
+  const enabled=!Boolean(state.project.share_enabled);saving(true);
+  try{state.project=await api(`/api/projects/${state.project.id}`,{method:'PUT',body:JSON.stringify({share_enabled:enabled})});renderShareControls();saving(false);toast(enabled?'已开启公司内只读共享':'已关闭项目共享')}
+  catch(error){saving(false,true);toast(error.message)}
+}
+function renderShareControls(){const button=$('#shareToggleBtn');button.textContent=`共享：${state.project?.share_enabled?'开':'关'}`;button.setAttribute('aria-pressed',String(Boolean(state.project?.share_enabled)));$('#copyViewLinkBtn').disabled=!state.project?.share_enabled;$('#copyEditLinkBtn').disabled=!state.project?.share_enabled;renderWidgetSetup()}
 let highlightedProjectIndex=-1;
 function projectSummaries(){return state.bootstrap?.projects||[]}
 function currentProjectName(){return state.project?.name||''}
@@ -97,7 +161,7 @@ function sharedCategory(){return state.project.listings.find((item)=>item.select
 function fillProduct(){
   for(const key of ['name','cost_cny','weight','weight_unit','length','width','height','dimension_unit'])$(`[name="${key}"]`,$('#productFields')).value=state.project[key]??'';
   $('[name="category_text"]',$('#productFields')).value=sharedCategory();
-  $('[name="referral_rate_override"]',$('#productFields')).value=sharedCommissionOverride();renderSites();
+  $('[name="referral_rate_override"]',$('#productFields')).value=sharedCommissionOverride();renderSites();renderShareControls();
 }
 function renderSites(){
   $('#siteTabs').innerHTML=state.bootstrap.countries.map((country)=>{const listing=state.project.listings.find((item)=>item.country_code===country.code);return `<button class="site-tab ${listing?.selected?'active':''}" type="button" data-country="${country.code}" aria-pressed="${Boolean(listing?.selected)}">${country.flag} ${marketCode(country.code)}</button>`}).join('');
@@ -110,7 +174,8 @@ function renderResults(){
   if(!selected.length){$('#resultRows').innerHTML='<tr><td class="empty-row" colspan="8">请至少选择一个测算站点</td></tr>';return}
   $('#resultRows').innerHTML=selected.map((listing)=>{
     const country=state.bootstrap.countries.find((item)=>item.code===listing.country_code);const result=resultFor(listing.country_code);const priced=Number(listing.sale_price)>0;const cls=priced?(Number(result?.profit)>=0?'positive':'negative'):'';const commission=listing.referral_rate_override??listing.matched_referral_rate??result?.referral_base_rate??15;
-    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.fba_fee)}`:'—'}<span class="subvalue">${escapeHtml(result?.size_tier_name||'待计算')}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="./site-card.html?project=${state.project.id}&country=${listing.country_code}" target="_blank" rel="noopener">单站卡片</a>${listing.country_code==='JP'?'<button class="japan-tax-button" type="button" data-japan-tax>税项设置</button>':''}</div></td></tr>`;
+    const siteCardHref=state.shareKey?`./site-card.html?country=${listing.country_code}#${new URLSearchParams({key:state.shareKey})}`:`./site-card.html?project=${state.project.id}&country=${listing.country_code}`;
+    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.fba_fee)}`:'—'}<span class="subvalue">${escapeHtml(result?.size_tier_name||'待计算')}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="${siteCardHref}" target="_blank" rel="noopener">单站卡片</a>${listing.country_code==='JP'?'<button class="japan-tax-button" type="button" data-japan-tax>税项设置</button>':''}</div></td></tr>`;
   }).join('');
   $$('[data-price]').forEach((input)=>{
     input.oninput=()=>{clearTimeout(input.saveTimer);input.saveTimer=setTimeout(()=>{state.pending=savePrice(input.dataset.price,input.value)},450)};
@@ -563,6 +628,8 @@ function bindEvents(){
   projectPickerList.onclick=(event)=>{const option=event.target.closest('[data-project-id]');if(option)selectProject(option.dataset.projectId)};
   projectPickerRoot.onfocusout=(event)=>{if(!projectPickerRoot.contains(event.relatedTarget))closeProjectPicker()};
   document.addEventListener('pointerdown',(event)=>{if(!event.target.closest('.project-picker'))closeProjectPicker()});
+  $('#copyViewLinkBtn').onclick=()=>copyShareLink('view');$('#copyEditLinkBtn').onclick=()=>copyShareLink('edit');$('#shareToggleBtn').onclick=toggleProjectShare;
+  $('#bindWidgetViewBtn').onclick=()=>bindWidget('view');$('#bindWidgetEditBtn').onclick=()=>bindWidget('edit');
   $('#newProjectBtn').onclick=async()=>{state.project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:`新品测算 ${state.bootstrap.projects.length+1}`})});history.replaceState(null,'',`?project=${state.project.id}`);await refreshProjects();fillProduct();await calculate();await loadCompetitors();toast('已新建品类')};
   $('#deleteProjectBtn').onclick=requestProjectDelete;
   $('#confirmProjectDelete').onclick=confirmProjectDelete;
