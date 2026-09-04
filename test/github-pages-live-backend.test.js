@@ -28,6 +28,7 @@ test('Pages build redirects every public entry to APP_PUBLIC_URL',()=>{
   for(const [filename,target]of Object.entries(targets)){
     const html=fs.readFileSync(path.join(root,'docs',filename),'utf8');
     assert.match(html,new RegExp(`location\\.replace\\("${target.replace(/[.]/g,'\\.')}`));
+    assert.match(html,/\+location\.search\+location\.hash/);
     assert.doesNotMatch(html,/static-api\.js|embed-config\.js/);
   }
 });

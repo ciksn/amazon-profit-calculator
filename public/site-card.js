@@ -1,6 +1,6 @@
 'use strict';
 
-const state={bootstrap:null,project:null,country:null,listing:null,result:null,records:[],recordResults:new Map(),recordTimers:new Map(),recordRequestVersions:new Map(),shareKey:'',saving:0,pending:Promise.resolve(),reloadTimer:null};
+const state={bootstrap:null,project:null,country:null,listing:null,result:null,records:[],recordResults:new Map(),recordTimers:new Map(),recordRequestVersions:new Map(),shareKey:'',readOnly:false,saving:0,pending:Promise.resolve(),reloadTimer:null};
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
@@ -50,7 +50,7 @@ async function migrateLegacyRecords(){
 async function initialize(){
   const hashParams=new URLSearchParams(location.hash.replace(/^#/,''));state.shareKey=hashParams.get('key')||'';
   if(state.shareKey){
-    state.bootstrap=await api('/api/embed/bootstrap');state.project=state.bootstrap.project;
+    state.bootstrap=await api('/api/embed/bootstrap');state.project=state.bootstrap.project;state.readOnly=Boolean(state.bootstrap.access?.read_only);
   }else state.bootstrap=await api('/api/bootstrap');
   if(!state.shareKey&&!state.bootstrap.projects.length)state.project=await api('/api/projects',{method:'POST',body:JSON.stringify({name:'新品测算 01'})});
   const params=new URLSearchParams(location.search);const requestedProject=Number(params.get('project'));
@@ -58,7 +58,12 @@ async function initialize(){
   const requestedCountry=String((state.shareKey?hashParams:params).get('country')||'').toUpperCase();
   const defaultCountry=state.project.listings.find((item)=>item.selected)?.country_code||state.bootstrap.countries[0]?.code;
   setCountry(state.bootstrap.countries.some((item)=>item.code===requestedCountry)?requestedCountry:defaultCountry,false);
-  await migrateLegacyRecords();await loadRecords();renderPickers();fillFields();await calculate();renderRecords();bindEvents();
+  if(!state.readOnly)await migrateLegacyRecords();await loadRecords();renderPickers();fillFields();await calculate();renderRecords();bindEvents();
+  if(state.readOnly){
+    document.body.classList.add('shared-readonly');const disable=(root=document)=>{if(root.matches?.('input,select,textarea'))root.disabled=true;$$('input,select,textarea',root).forEach((control)=>{control.disabled=true})};disable();
+    new MutationObserver((entries)=>entries.forEach((entry)=>entry.addedNodes.forEach((node)=>{if(node.nodeType===1)disable(node)}))).observe(document.body,{childList:true,subtree:true});
+    $('#openParametersBtn').hidden=true;$('#newRecordBtn').hidden=true;$('#saveState').hidden=true;
+  }
 }
 function setCountry(code,shouldCalculate=true){
   state.country=state.bootstrap.countries.find((item)=>item.code===code)||state.bootstrap.countries[0];

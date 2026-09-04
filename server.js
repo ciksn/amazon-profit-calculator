@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const db = require('./lib/db');
 const {bearerToken,createSsoVerifier}=require('./lib/sso');
-const {requestContext,currentUser,currentOwnerId}=require('./lib/request-context');
+const {requestContext,currentUser,currentActor,useDataOwner,currentPermission,currentOwnerId}=require('./lib/request-context');
 const { calculateProfit,findSalePriceForProfitRate } = require('./lib/profit');
 const { lookupJapanTariff } = require('./lib/japan-tariff');
 const competitorAnalysis = require('./lib/competitor-analysis');
@@ -75,15 +75,15 @@ async function matchCommission(countryCode,text,salePrice=0) {
   return { matched:false,fallback:false,rule:null };
 }
 
-async function getProject(id) {
-  const project=await db.one('SELECT * FROM projects WHERE id = $1 AND owner_user_id = $2',[id,currentOwnerId()]);
+async function getProject(id,ownerId=currentOwnerId()) {
+  const project=await db.one('SELECT * FROM projects WHERE id = $1 AND owner_user_id = $2',[id,ownerId]);
   if (!project) return null;
   project.listings=await db.many(`SELECT pc.*,c.name AS country_name,c.flag,c.currency,c.symbol,
       f.id AS freight_rule_id,f.pricing_mode AS freight_pricing_mode,
       f.price_per_kg_cny AS freight_price_per_kg_cny,f.price_per_cbm_cny AS freight_price_per_cbm_cny
     FROM project_countries pc JOIN countries c ON c.code=pc.country_code
     LEFT JOIN freight_rules f ON f.country_code=pc.country_code
-    WHERE pc.project_id=$1 AND pc.owner_user_id=$2 AND c.active=TRUE ORDER BY c.priority`,[id,currentOwnerId()]);
+    WHERE pc.project_id=$1 AND pc.owner_user_id=$2 AND c.active=TRUE ORDER BY c.priority`,[id,ownerId]);
   for (const listing of project.listings) {
     if (listing.referral_rate_override != null || !listing.category_text) continue;
     const matched=await matchCommission(listing.country_code,listing.category_text,listing.sale_price);
@@ -92,11 +92,12 @@ async function getProject(id) {
       matched_referral_rate_above:matched.rule.rate_above,matched_referral_minimum:matched.rule.minimum_fee || 0,
       commission_fallback:Boolean(matched.fallback) });
   }
+  if(currentPermission()){delete project.share_key;delete project.edit_share_key;}
   return project;
 }
 
-async function calculateCompetitor(row) {
-  const project=await getProject(Number(row.project_id));
+async function calculateCompetitor(row,ownerId=currentOwnerId()) {
+  const project=await getProject(Number(row.project_id),ownerId);
   if (!project) return null;
   const listing=project.listings.find((item)=>item.country_code===row.country_code);
   const country=await db.one('SELECT * FROM countries WHERE code=$1 AND active=TRUE',[row.country_code]);
@@ -130,10 +131,10 @@ async function calculateCompetitor(row) {
     calculation:filled ? calculated : null };
 }
 
-async function listCompetitors(projectId,kind='standard') {
-  const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 AND owner_user_id=$3 ORDER BY country_code,monthly_revenue_local DESC,id',[projectId,kind,currentOwnerId()]);
+async function listCompetitors(projectId,kind='standard',ownerId=currentOwnerId()) {
+  const rows=await db.many('SELECT * FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 AND owner_user_id=$3 ORDER BY country_code,monthly_revenue_local DESC,id',[projectId,kind,ownerId]);
   const perCountry={};const visible=rows.filter((row)=>(perCountry[row.country_code]=(perCountry[row.country_code]||0)+1)<=5);
-  return Promise.all(visible.map(calculateCompetitor));
+  return Promise.all(visible.map((row)=>calculateCompetitor(row,ownerId)));
 }
 
 function validated(validator,body,...args) {
@@ -243,8 +244,8 @@ async function selectionDocumentPayload(projectId) {
   };
 }
 
-async function competitorCounts(projectId,kind='standard') {
-  const rows=await db.many('SELECT country_code,COUNT(*)::int AS count FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 AND owner_user_id=$3 GROUP BY country_code',[projectId,kind,currentOwnerId()]);
+async function competitorCounts(projectId,kind='standard',ownerId=currentOwnerId()) {
+  const rows=await db.many('SELECT country_code,COUNT(*)::int AS count FROM project_competitors WHERE project_id=$1 AND competitor_kind=$2 AND owner_user_id=$3 GROUP BY country_code',[projectId,kind,ownerId]);
   return Object.fromEntries(rows.map((row)=>[row.country_code,row.count]));
 }
 
@@ -253,8 +254,8 @@ function jsonList(value) {
   try{const parsed=JSON.parse(value||'[]');return Array.isArray(parsed)?parsed:[]}catch{return []}
 }
 
-async function reviewOverviews(projectId,kind) {
-  const rows=await db.many('SELECT * FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind=$2 AND owner_user_id=$3 ORDER BY country_code',[projectId,kind,currentOwnerId()]);
+async function reviewOverviews(projectId,kind,ownerId=currentOwnerId()) {
+  const rows=await db.many('SELECT * FROM competitor_review_overviews WHERE project_id=$1 AND competitor_kind=$2 AND owner_user_id=$3 ORDER BY country_code',[projectId,kind,ownerId]);
   return Object.fromEntries(rows.map((row)=>[row.country_code,{
     ...row,
     pros:jsonList(row.pros),
@@ -389,9 +390,13 @@ async function insertCompetitor(project,countryCode,body={},importedFromExcel=fa
 }
 
 async function bootstrap() {
+  const ownerId=currentOwnerId();const ownerName=String(currentUser()?.name||'').trim().slice(0,200);
+  if(ownerName)await db.query("UPDATE projects SET owner_name=$1 WHERE owner_user_id=$2 AND owner_name=''",[ownerName,ownerId]);
+  const missingEditKeys=await db.many("SELECT id FROM projects WHERE owner_user_id=$1 AND edit_share_key=''",[ownerId]);
+  for(const row of missingEditKeys)await db.query("UPDATE projects SET edit_share_key=$1 WHERE id=$2 AND owner_user_id=$3 AND edit_share_key=''",[crypto.randomUUID(),row.id,ownerId]);
   const [countries,projects,fba,freightMissing,commission]=await Promise.all([
     db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority'),
-    db.many('SELECT * FROM projects WHERE owner_user_id=$1 ORDER BY updated_at DESC,id DESC',[currentOwnerId()]),
+    db.many('SELECT * FROM projects WHERE owner_user_id=$1 ORDER BY updated_at DESC,id DESC',[ownerId]),
     db.one('SELECT COUNT(*)::int AS n FROM fba_rules f JOIN countries c ON c.code=f.country_code WHERE c.active=TRUE'),
     db.one("SELECT COUNT(*)::int AS n FROM freight_rules f JOIN countries c ON c.code=f.country_code WHERE c.active=TRUE AND f.status='missing'"),
     db.one('SELECT COUNT(*)::int AS n FROM commission_rules r JOIN countries c ON c.code=r.country_code WHERE c.active=TRUE')
@@ -399,23 +404,29 @@ async function bootstrap() {
   return { countries,projects,ruleCounts:{ fba:fba.n,freightMissing:freightMissing.n,commission:commission.n } };
 }
 
-async function embedBootstrap(project) {
+async function embedBootstrap(project,access={read_only:false,owner_name:''}) {
   const [countries,fba,freightMissing,commission]=await Promise.all([
     db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority'),
     db.one('SELECT COUNT(*)::int AS n FROM fba_rules f JOIN countries c ON c.code=f.country_code WHERE c.active=TRUE'),
     db.one("SELECT COUNT(*)::int AS n FROM freight_rules f JOIN countries c ON c.code=f.country_code WHERE c.active=TRUE AND f.status='missing'"),
     db.one('SELECT COUNT(*)::int AS n FROM commission_rules r JOIN countries c ON c.code=r.country_code WHERE c.active=TRUE')
   ]);
-  return { countries,project,ruleCounts:{ fba:fba.n,freightMissing:freightMissing.n,commission:commission.n } };
+  return { countries,project,access,ruleCounts:{ fba:fba.n,freightMissing:freightMissing.n,commission:commission.n } };
+}
+
+function sharedProjectPayload(project){
+  if(!project)return null;const payload={...project};delete payload.share_key;delete payload.edit_share_key;return payload;
 }
 
 async function createProject(body) {
   const now=new Date().toISOString();
   const requestedShareKey=String(body.share_key||'').trim();
   const shareKey=/^[A-Za-z0-9_-]{8,120}$/.test(requestedShareKey)?requestedShareKey:crypto.randomUUID();
+  const editShareKey=crypto.randomUUID();
+  const ownerName=String(currentUser()?.name||'').trim().slice(0,200);
   const project=await db.one(`INSERT INTO projects
-    (owner_user_id,share_key,name,cost_cny,length,width,height,dimension_unit,weight,weight_unit,created_at,updated_at)
-    VALUES ($1,$2,$3,0,0,0,0,'cm',0,'kg',$4,$4) RETURNING *`,[currentOwnerId(),shareKey,body.name || '未命名品类',now]);
+    (owner_user_id,owner_name,share_key,edit_share_key,share_enabled,name,cost_cny,length,width,height,dimension_unit,weight,weight_unit,created_at,updated_at)
+    VALUES ($1,$2,$3,$4,TRUE,$5,0,0,0,0,'cm',0,'kg',$6,$6) RETURNING *`,[currentOwnerId(),ownerName,shareKey,editShareKey,body.name || '未命名品类',now]);
   await db.query(`INSERT INTO project_countries(project_id,owner_user_id,country_code,selected)
     SELECT $1::integer,$2::bigint,code,CASE WHEN code='AU' THEN 1 ELSE 0 END FROM countries`,[project.id,currentOwnerId()]);
   return getProject(project.id);
@@ -434,12 +445,34 @@ async function prepareEmbedRequest(req,res,url) {
 
   const key=workspaceKey(req);
   if (!key) { json(res,401,{ error:'缺少测算实例访问码' });return true; }
-  const row=await db.one('SELECT id FROM projects WHERE share_key=$1 AND owner_user_id=$2',[key,currentOwnerId()]);
+  const row=await db.one(`SELECT id,owner_user_id,owner_name,
+    CASE WHEN edit_share_key=$1 THEN 'edit' ELSE 'view' END AS link_permission
+    FROM projects WHERE share_enabled=TRUE AND (share_key=$1 OR edit_share_key=$1)`,[key]);
   if (!row) { json(res,404,{ error:'测算实例不存在或访问码已失效' });return true; }
-  const projectId=Number(row.id);req.embedProjectId=projectId;
+  const actor=currentActor();const projectId=Number(row.id);const ownerId=Number(row.owner_user_id);const isOwner=ownerId===Number(actor?.id);
+  const permission=isOwner?'owner':row.link_permission;useDataOwner(ownerId,permission);req.embedProjectId=projectId;
 
   if (url.pathname==='/api/embed/bootstrap' && req.method==='GET') {
-    return json(res,200,await embedBootstrap(await getProject(projectId)));
+    return json(res,200,await embedBootstrap(sharedProjectPayload(await getProject(projectId,ownerId)),{
+      read_only:permission==='view',permission,owner_name:row.owner_name||'',current_user_name:String(actor?.name||''),shared:true
+    }));
+  }
+  if(permission==='view'){
+    if(url.pathname==='/api/embed/project'&&req.method==='GET')return json(res,200,sharedProjectPayload(await getProject(projectId,ownerId)));
+    const sharedCompetitors=url.pathname.match(/^\/api\/embed\/(competitors|similar-competitors)$/);
+    if(sharedCompetitors&&req.method==='GET'){
+      const kind=sharedCompetitors[1]==='similar-competitors'?'similar':'standard';
+      const overviews=await reviewOverviews(projectId,kind,ownerId);const values=Object.values(overviews);
+      return json(res,200,{competitors:await listCompetitors(projectId,kind,ownerId),competitor_counts:await competitorCounts(projectId,kind,ownerId),
+        review_overviews:overviews,review_overview:values.length===1?values[0]:null});
+    }
+    if(url.pathname==='/api/embed/site-card-records'&&req.method==='GET'){
+      const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();const params=[projectId,ownerId];let where='project_id=$1 AND owner_user_id=$2';
+      if(countryCode){params.push(countryCode);where+=' AND country_code=$3'}
+      return json(res,200,{records:await db.many(`SELECT * FROM site_card_records WHERE ${where} ORDER BY created_at,id`,params)});
+    }
+    if(url.pathname==='/api/embed/calculate'&&req.method==='POST')return json(res,200,await calculateProjectPayload(await getProject(projectId,ownerId),await readBody(req)));
+    return json(res,403,{error:'这是他人共享的项目，仅归属人可以修改'});
   }
   if (url.pathname==='/api/embed/project') {
     if (!['GET','PUT'].includes(req.method)) { json(res,405,{ error:'嵌入卡片不能删除测算实例' });return true; }
@@ -447,10 +480,12 @@ async function prepareEmbedRequest(req,res,url) {
   }
   const country=url.pathname.match(/^\/api\/embed\/countries\/([A-Z]{2})$/);
   if (country) { url.pathname=`/api/projects/${projectId}/countries/${country[1]}`;return false; }
-  const competitorCollection=url.pathname.match(/^\/api\/embed\/competitors(?:\/(import|analyze))?$/);
+  const competitorCollection=url.pathname.match(/^\/api\/embed\/competitors(?:\/(import|analyze|review-analysis))?$/);
   if (competitorCollection) {
     url.pathname=`/api/projects/${projectId}/competitors${competitorCollection[1] ? `/${competitorCollection[1]}` : ''}`;return false;
   }
+  const similarCollection=url.pathname.match(/^\/api\/embed\/similar-competitors(?:\/(import|analyze|review-analysis))?$/);
+  if(similarCollection){url.pathname=`/api/projects/${projectId}/similar-competitors${similarCollection[1]?`/${similarCollection[1]}`:''}`;return false}
   const competitorItem=url.pathname.match(/^\/api\/embed\/competitors\/(\d+)$/);
   if (competitorItem) {
     const owned=await db.one('SELECT id FROM project_competitors WHERE id=$1 AND project_id=$2 AND owner_user_id=$3',[Number(competitorItem[1]),projectId,currentOwnerId()]);
@@ -471,6 +506,20 @@ async function prepareEmbedRequest(req,res,url) {
   json(res,404,{ error:'嵌入接口不存在' });return true;
 }
 
+async function calculateProjectPayload(project,body={}){
+  if(!project)return null;
+  const countries=await db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority');const results=[];
+  const listings=body.country_code?project.listings.filter((item)=>item.country_code===body.country_code):project.listings.filter((item)=>item.selected);
+  for(const listing of listings){
+    const country=countries.find((item)=>item.code===listing.country_code);if(!country)continue;
+    const [fbaRules,sizeTiers,freightRule]=await Promise.all([db.many('SELECT * FROM fba_rules WHERE country_code=$1',[country.code]),db.many('SELECT * FROM size_tiers WHERE country_code=$1',[country.code]),db.one('SELECT * FROM freight_rules WHERE country_code=$1',[country.code])]);
+    const result=calculateProfit({project,country,listing,fbaRules,sizeTiers,freightRule});
+    if(body.include_target_prices)result.target_prices=Object.fromEntries([0,10,20,30].map((targetRate)=>[targetRate,findSalePriceForProfitRate({project,country,listing,fbaRules,sizeTiers,freightRule,targetRate})]));
+    results.push(result);
+  }
+  return {project_id:project.id,results};
+}
+
 async function api(req,res,url) {
   if (url.pathname.startsWith('/api/embed/')) {
     const handled=await prepareEmbedRequest(req,res,url);
@@ -484,9 +533,9 @@ async function api(req,res,url) {
 
   const shareProjectMatch=url.pathname.match(/^\/api\/projects\/by-share-key\/([A-Za-z0-9_-]{8,120})$/);
   if (shareProjectMatch && method==='GET') {
-    const row=await db.one('SELECT id FROM projects WHERE share_key=$1 AND owner_user_id=$2',[shareProjectMatch[1],currentOwnerId()]);
+    const row=await db.one('SELECT id,owner_user_id FROM projects WHERE share_key=$1 AND share_enabled=TRUE',[shareProjectMatch[1]]);
     if (!row) return json(res,404,{ error:'分享项目不存在' });
-    return json(res,200,await getProject(row.id));
+    return json(res,200,sharedProjectPayload(await getProject(row.id,row.owner_user_id)));
   }
 
   const siteCardCollectionMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/site-card-records$/);
@@ -619,7 +668,7 @@ async function api(req,res,url) {
   if (projectMatch && method==='PUT') {
     const id=Number(projectMatch[1]);const body=await readBody(req);
     if(!await getProject(id))return json(res,404,{error:'品类不存在'});
-    const allowed=['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit','image_data'];
+    const allowed=['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit','image_data',...(currentPermission()==='edit'?[]:['share_enabled'])];
     const fields=allowed.filter((key)=>Object.hasOwn(body,key));
     if (fields.length) {
       const setFields=[...fields,'updated_at'];
@@ -796,16 +845,7 @@ async function api(req,res,url) {
   if (method==='POST' && url.pathname==='/api/calculate') {
     const body=await readBody(req);const project=await getProject(Number(req.embedProjectId || body.project_id));
     if (!project) return json(res,404,{ error:'品类不存在' });
-    const countries=await db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority');const results=[];
-    const listings=body.country_code ? project.listings.filter((item)=>item.country_code===body.country_code) : project.listings.filter((item)=>item.selected);
-    for (const listing of listings) {
-      const country=countries.find((item)=>item.code===listing.country_code);
-      const [fbaRules,sizeTiers,freightRule]=await Promise.all([db.many('SELECT * FROM fba_rules WHERE country_code=$1',[country.code]),db.many('SELECT * FROM size_tiers WHERE country_code=$1',[country.code]),db.one('SELECT * FROM freight_rules WHERE country_code=$1',[country.code])]);
-      const result=calculateProfit({ project,country,listing,fbaRules,sizeTiers,freightRule });
-      if (body.include_target_prices) result.target_prices=Object.fromEntries([0,10,20,30].map((targetRate)=>[targetRate,findSalePriceForProfitRate({ project,country,listing,fbaRules,sizeTiers,freightRule,targetRate })]));
-      results.push(result);
-    }
-    return json(res,200,{ project_id:project.id,results });
+    return json(res,200,await calculateProjectPayload(project,body));
   }
 
   const ruleListMatch=url.pathname.match(/^\/api\/rules\/(countries|sizes|fba|freight|commission)$/);

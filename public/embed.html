@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>MarginGo · 飞书卡片版</title>
-  <link rel="stylesheet" href="./embed.css?v=20260722-3">
+  <link rel="stylesheet" href="./embed.css?v=20260904-1">
   <link rel="stylesheet" href="./auth.css">
 </head>
 <body>
@@ -12,11 +12,23 @@
     <header class="embed-head">
       <div class="brand"><span>M</span><div><b>MarginGo</b><small>飞书选品利润卡片</small></div></div>
       <div class="head-actions">
+        <span class="access-badge" id="accessBadge" hidden></span>
         <div class="project-picker"><label for="projectPicker">品类</label><div class="project-picker-control"><input id="projectPicker" type="search" autocomplete="off" role="combobox" aria-label="搜索并选择品类" aria-autocomplete="list" aria-expanded="false" aria-controls="projectPickerList"><span class="project-picker-search-icon" aria-hidden="true"></span><div class="project-picker-list" id="projectPickerList" role="listbox" hidden></div></div></div>
+        <button class="ghost-button share-link-button" id="copyViewLinkBtn" type="button">复制只读链接</button>
+        <button class="ghost-button share-link-button edit-share-link-button" id="copyEditLinkBtn" type="button">复制编辑链接</button>
+        <button class="ghost-button share-toggle-button" id="shareToggleBtn" type="button" aria-pressed="true">共享：开</button>
         <button class="ghost-button" id="newProjectBtn" type="button">新建</button>
         <button class="ghost-button delete-project-button" id="deleteProjectBtn" type="button">删除</button>
       </div>
     </header>
+
+    <section class="instance-setup" id="widgetSetup" hidden>
+      <div><b>把当前品类放进这份飞书文档</b><p id="widgetSetupHint">先在上方选择品类，再决定文档中的其他人只能查看，还是也可以编辑。</p></div>
+      <div class="instance-setup-actions">
+        <button class="ghost-button" id="bindWidgetViewBtn" type="button">仅查看</button>
+        <button class="copy-button" id="bindWidgetEditBtn" type="button">可查看并编辑</button>
+      </div>
+    </section>
 
     <section class="product-panel" aria-labelledby="productTitle">
       <div class="section-title"><div><span class="step">01</span><div><b id="productTitle">产品参数</b><small>修改后自动保存并重新计算</small></div></div><span class="save-state" id="saveState">已保存</span></div>
@@ -166,10 +178,10 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="./config.js"></script>
-  <script src="./auth.js"></script>
+  <script src="./auth.js?v=20260904-1"></script>
   <script src="./dimensions.js"></script>
   <script src="./exceljs.min.js"></script>
   <script src="./competitor-import.js?v=20260722-3"></script>
-  <script src="./embed.js?v=20260724-3"></script>
+  <script src="./embed.js?v=20260904-1"></script>
 </body>
 </html>
