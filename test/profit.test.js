@@ -43,6 +43,23 @@ test('美国站利润逐项扣除且不重复扣销售税', () => {
   assert.equal(result.profit_rate,36.02);
 });
 
+test('手动 FBA 费用覆盖自动配送费并允许填写 0', () => {
+  const input={
+    project:{ cost_cny:0,length:20,width:10,height:5,dimension_unit:'cm',weight:.5,weight_unit:'kg' },
+    country:{ code:'US',currency:'USD',symbol:'$',cny_per_local:1,vat_rate:0,tax_rate:0,tax_basis:'none',tax_note:'' },
+    fbaRules:[{ size_name:'标准件',max_long_cm:45,max_mid_cm:34,max_short_cm:26,max_weight_kg:2,included_weight_kg:.5,base_fee:4,per_kg_fee:1,surcharge_rate:0,status:'verified' }],
+    freightRule:{ price_per_kg_cny:0,min_charge_cny:0,status:'verified' }
+  };
+  const manual=calculateProfit({...input,listing:{sale_price:20,referral_rate_override:0,fba_fee_override:6.5}});
+  assert.equal(manual.fba_calculated_fee,4);
+  assert.equal(manual.fba_fee,6.5);
+  assert.equal(manual.fba_fee_overridden,true);
+  assert.equal(manual.profit,13.5);
+  const zero=calculateProfit({...input,listing:{sale_price:20,referral_rate_override:0,fba_fee_override:0}});
+  assert.equal(zero.fba_fee,0);
+  assert.equal(zero.fba_fee_overridden,true);
+});
+
 test('通用含税价公式可正确拆出 10% 税额', () => {
   const result = calculateProfit({
     project:{ cost_cny:47,length:20,width:10,height:5,dimension_unit:'cm',weight:.5,weight_unit:'kg' },

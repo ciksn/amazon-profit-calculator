@@ -100,7 +100,8 @@ function fbaExplanation(result){
     ? `${money(result.fba_rule_base_fee)} + ${number(result.fba_extra_weight_kg,3)} kg × ${money(result.fba_per_kg_fee)}/kg = ${money(result.fba_base_fee)}`
     : `当前费阶固定费用：${money(result.fba_base_fee)}`;
   const surcharge=Number(result.fba_surcharge_rate)>0?`附加费：${money(result.fba_base_fee)} × ${number(result.fba_surcharge_rate,2)}% = ${money(result.fba_surcharge_fee)}`:'附加费：无';
-  return ['FBA 配送费计算',`站点：${state.country.code} · ${state.country.name}`,`商品尺寸：${dimensions} cm`,`尺寸分段：${result.size_tier_name||'未匹配'}（${result.size_tier_code||'无代码'}）`,`命中费阶：${result.fba_rule_name||'未匹配'}`,`实际重量：${number(result.actual_weight_kg,3)} kg`,`FBA 体积重：${weightFormula}`,`本费阶计费重量：${number(result.fba_billable_weight_kg,3)} kg`,`包含重量：${number(result.fba_included_weight_kg,3)} kg${result.fba_weight_increment_kg?`；续重按 ${number(result.fba_weight_increment_kg,3)} kg 向上取整`:''}`,`基础费用：${feeFormula}`,surcharge,`FBA 配送费：${money(result.fba_base_fee)} + ${money(result.fba_surcharge_fee)} = ${money(result.fba_fee)}`].join('\n');
+  const total=result.fba_fee_overridden?`系统自动计算：${money(result.fba_calculated_fee)}\n手动 FBA 费用（可含仓储等估算）：${money(result.fba_fee)}`:`FBA 配送费：${money(result.fba_base_fee)} + ${money(result.fba_surcharge_fee)} = ${money(result.fba_fee)}`;
+  return ['FBA 配送费计算',`站点：${state.country.code} · ${state.country.name}`,`商品尺寸：${dimensions} cm`,`尺寸分段：${result.size_tier_name||'未匹配'}（${result.size_tier_code||'无代码'}）`,`命中费阶：${result.fba_rule_name||'未匹配'}`,`实际重量：${number(result.actual_weight_kg,3)} kg`,`FBA 体积重：${weightFormula}`,`本费阶计费重量：${number(result.fba_billable_weight_kg,3)} kg`,`包含重量：${number(result.fba_included_weight_kg,3)} kg${result.fba_weight_increment_kg?`；续重按 ${number(result.fba_weight_increment_kg,3)} kg 向上取整`:''}`,`基础费用：${feeFormula}`,surcharge,total].join('\n');
 }
 function freightExplanation(result){
   const dimensions=(result.dimensions_cm||[]).map((value)=>number(value,2)).join(' × ')||'未填写';
