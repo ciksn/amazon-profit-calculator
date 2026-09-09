@@ -110,7 +110,7 @@ async function calculateCompetitor(row,ownerId=currentOwnerId()) {
     dimension_unit:usesProjectDefaults ? project.dimension_unit : row.dimension_unit,
     weight:usesProjectDefaults ? project.weight : row.weight,weight_unit:usesProjectDefaults ? project.weight_unit : row.weight_unit };
   const categoryText=usesProjectDefaults ? listing.category_text : row.category_text;
-  const competitorListing={ ...listing,sale_price:row.sale_price,category_text:categoryText };
+  const competitorListing={ ...listing,sale_price:row.sale_price,category_text:categoryText,fba_fee_override:null };
   if (competitorListing.referral_rate_override == null && competitorListing.category_text) {
     const matched=await matchCommission(row.country_code,competitorListing.category_text,row.sale_price);
     if (matched.matched) Object.assign(competitorListing,{ matched_category:matched.rule.parent_category,
@@ -687,7 +687,7 @@ async function api(req,res,url) {
   if (listingMatch && method==='PUT') {
     const projectId=Number(listingMatch[1]);const code=listingMatch[2];const body=await readBody(req);
     if(!await getProject(projectId))return json(res,404,{error:'品类不存在'});
-    const allowed=['selected','sale_price','category_text','referral_rate_override','matched_category','matched_referral_rate','matched_referral_threshold','matched_referral_rate_above','matched_referral_minimum','declaration_ratio','declared_value_override','customs_rate','consumption_tax_rate','customs_hs_code','customs_origin_country','customs_preference','customs_rate_type','customs_schedule_date','customs_source_url','screenshot_name'];
+    const allowed=['selected','sale_price','category_text','referral_rate_override','fba_fee_override','matched_category','matched_referral_rate','matched_referral_threshold','matched_referral_rate_above','matched_referral_minimum','declaration_ratio','declared_value_override','customs_rate','consumption_tax_rate','customs_hs_code','customs_origin_country','customs_preference','customs_rate_type','customs_schedule_date','customs_source_url','screenshot_name'];
     const fields=allowed.filter((key)=>Object.hasOwn(body,key));
     if (fields.length) await db.query(updateSql('project_countries',fields,`project_id=$${fields.length+1} AND country_code=$${fields.length+2} AND owner_user_id=$${fields.length+3}`),
       [...fields.map((key)=>key==='selected' ? Number(Boolean(body[key])) : body[key]),projectId,code,currentOwnerId()]);

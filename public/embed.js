@@ -175,11 +175,15 @@ function renderResults(){
   $('#resultRows').innerHTML=selected.map((listing)=>{
     const country=state.bootstrap.countries.find((item)=>item.code===listing.country_code);const result=resultFor(listing.country_code);const priced=Number(listing.sale_price)>0;const cls=priced?(Number(result?.profit)>=0?'positive':'negative'):'';const commission=listing.referral_rate_override??listing.matched_referral_rate??result?.referral_base_rate??15;
     const siteCardHref=state.shareKey?`./site-card.html?country=${listing.country_code}#${new URLSearchParams({key:state.shareKey})}`:`./site-card.html?project=${state.project.id}&country=${listing.country_code}`;
-    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.fba_fee)}`:'—'}<span class="subvalue">${escapeHtml(result?.size_tier_name||'待计算')}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="${siteCardHref}" target="_blank" rel="noopener">单站卡片</a>${listing.country_code==='JP'?'<button class="japan-tax-button" type="button" data-japan-tax>税项设置</button>':''}</div></td></tr>`;
+    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.fba_fee_override??''}" placeholder="${result?number(result.fba_calculated_fee):'0.00'}" data-fba="${listing.country_code}" aria-label="${escapeHtml(country.name)}站手动FBA费用"></label><span class="subvalue">${result?.fba_fee_overridden?'手动费用':'留空使用自动值'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="${siteCardHref}" target="_blank" rel="noopener">单站卡片</a>${listing.country_code==='JP'?'<button class="japan-tax-button" type="button" data-japan-tax>税项设置</button>':''}</div></td></tr>`;
   }).join('');
   $$('[data-price]').forEach((input)=>{
     input.oninput=()=>{clearTimeout(input.saveTimer);input.saveTimer=setTimeout(()=>{state.pending=savePrice(input.dataset.price,input.value)},450)};
     input.onchange=()=>{clearTimeout(input.saveTimer);state.pending=savePrice(input.dataset.price,input.value)};
+  });
+  $$('[data-fba]').forEach((input)=>{
+    input.oninput=()=>{clearTimeout(input.saveTimer);input.saveTimer=setTimeout(()=>{state.pending=saveFba(input.dataset.fba,input.value)},450)};
+    input.onchange=()=>{clearTimeout(input.saveTimer);state.pending=saveFba(input.dataset.fba,input.value)};
   });
   $$('[data-copy-listing]').forEach((button)=>button.onclick=()=>copyListingResult(button.dataset.copyListing));
   $$('[data-japan-tax]').forEach((button)=>button.onclick=openJapanTaxModal);
@@ -564,10 +568,18 @@ async function savePrice(code,value){
   try{state.project=await api(`/api/projects/${state.project.id}/countries/${code}`,{method:'PUT',body:JSON.stringify({sale_price:Number(value)||0})});await calculate();saving(false)}
   catch(error){saving(false,true);toast(error.message)}
 }
+async function saveFba(code,value){
+  const raw=String(value??'').trim();const override=raw===''?null:Number(raw);
+  if(override!==null&&(!Number.isFinite(override)||override<0))return toast('FBA费用请输入大于或等于 0 的数值');
+  saving(true);
+  try{state.project=await api(`/api/projects/${state.project.id}/countries/${code}`,{method:'PUT',body:JSON.stringify({fba_fee_override:override})});await calculate();saving(false)}
+  catch(error){saving(false,true);toast(error.message)}
+}
 
 async function flushDrafts(){
   await state.pending;
   const draftPrices=Object.fromEntries($$('[data-price]').map((input)=>[input.dataset.price,input.value]));
+  const draftFba=Object.fromEntries($$('[data-fba]').map((input)=>[input.dataset.fba,input.value]));
   await saveProduct();
   if(formValue('category_text').trim()!==sharedCategory())await saveCategory();
   const commissionDraft=formValue('referral_rate_override');
@@ -575,6 +587,10 @@ async function flushDrafts(){
   for(const [code,value] of Object.entries(draftPrices)){
     const listing=state.project.listings.find((item)=>item.country_code===code);
     if(Number(value||0)!==Number(listing?.sale_price||0))await savePrice(code,value);
+  }
+  for(const [code,value] of Object.entries(draftFba)){
+    const listing=state.project.listings.find((item)=>item.country_code===code);const normalized=value===''?null:Number(value);
+    if(normalized!==(listing?.fba_fee_override??null))await saveFba(code,value);
   }
 }
 async function writePlainText(text){

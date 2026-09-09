@@ -59,6 +59,13 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
   const jp=project.listings.find((row)=>row.country_code==='JP');
   assert.equal(jp.declaration_ratio,.15);
   assert.equal(jp.consumption_tax_rate,10);
+  const fbaOverrideResponse=await fetch(`${base}/api/projects/${projectId}/countries/AU`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({fba_fee_override:12.34})});
+  assert.equal(fbaOverrideResponse.status,200);
+  assert.equal((await fbaOverrideResponse.json()).listings.find((row)=>row.country_code==='AU').fba_fee_override,12.34);
+  const fbaCalculation=await (await fetch(`${base}/api/calculate`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({project_id:projectId,country_code:'AU'})})).json();
+  assert.equal(fbaCalculation.results[0].fba_fee,12.34);
+  assert.equal(fbaCalculation.results[0].fba_fee_overridden,true);
+  await fetch(`${base}/api/projects/${projectId}/countries/AU`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({fba_fee_override:null})});
   const auFreight=freight.find((row)=>row.country_code==='AU');
   const originalRate=auFreight.price_per_kg_cny;
   try {

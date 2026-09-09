@@ -115,7 +115,7 @@ function projectSnapshot(project) {
   return { v:1,key:sharedProjectKey(project),product:{ name:project.name,cost_cny:project.cost_cny,length:project.length,width:project.width,height:project.height,
     dimension_unit:project.dimension_unit,weight:project.weight,weight_unit:project.weight_unit },
     listings:project.listings.filter((item) => item.selected).map((item) => ({ country_code:item.country_code,selected:true,
-      sale_price:item.sale_price,category_text:item.category_text,referral_rate_override:item.referral_rate_override,
+      sale_price:item.sale_price,category_text:item.category_text,referral_rate_override:item.referral_rate_override,fba_fee_override:item.fba_fee_override,
       declaration_ratio:item.declaration_ratio,declared_value_override:item.declared_value_override,customs_rate:item.customs_rate,
       consumption_tax_rate:item.consumption_tax_rate,customs_hs_code:item.customs_hs_code,customs_preference:item.customs_preference })) };
 }
@@ -294,7 +294,7 @@ function marketRow(project,listing) {
     <div class="market-country"><span>${country.flag}</span><div><b>${marketCode(country.code)}</b><small>${country.name}</small></div>${warning}</div>
     <label class="table-input"><b>${escapeHtml(listing.symbol)}</b><input type="number" min="0" step="0.01" value="${listing.sale_price || ''}" placeholder="0.00" data-listing-input="sale_price" data-project-id="${project.id}" data-country-code="${listing.country_code}" aria-label="${country.name}站售价"></label>
     <button class="calculated-cell cell-editor" type="button" data-edit-commission="${listing.country_code}" data-project-id="${project.id}" aria-label="编辑${country.name}站佣金"><b>${formatNumber(commission,2)}%</b><small>${listing.referral_rate_override == null ? escapeHtml(listing.matched_category || '点击识别品类') : '手动佣金'}</small></button>
-    <div class="calculated-cell"><b>${fba}</b><small>${escapeHtml(result?.size_tier_name || '待计算')}</small></div>
+    <button class="calculated-cell cell-editor" type="button" data-edit-fba="${listing.country_code}" data-project-id="${project.id}" aria-label="编辑${country.name}站FBA费用"><b>${fba}</b><small>${result?.fba_fee_overridden ? '手动费用 · 点击编辑' : `${escapeHtml(result?.size_tier_name || '待计算')} · 点击编辑`}</small></button>
     <button class="calculated-cell cell-editor" type="button" data-edit-freight="${listing.country_code}" data-project-id="${project.id}" aria-label="查看并编辑${country.name}站头程费用"><b>${freight}</b><small>${result?.freight_pricing_mode === 'cbm' ? '按方 · 点击查看' : '按计费重 · 点击查看'}</small></button>
     <div class="calculated-cell"><b>${exchange}</b><small>1 ${escapeHtml(listing.currency)}</small></div>
     <div class="profit-cell ${cls}"><b>${hasPrice ? profit : '—'}</b><small>${hasPrice ? '单件' : '待填售价'}</small></div>
@@ -317,6 +317,7 @@ function bindCategoryEvents() {
   $$('[data-copy-site-profit]').forEach((button) => button.onclick = () => copySiteProfitTable(button.dataset.copySiteProfit).catch((error) => toast(error.message)));
   $$('[data-copy-listing]').forEach((button) => button.onclick = () => copyListingResult(button.dataset.projectId,button.dataset.copyListing).catch((error) => toast(error.message)));
   $$('[data-edit-commission]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editCommission,'commission'));
+  $$('[data-edit-fba]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editFba,'fba'));
   $$('[data-edit-freight]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editFreight,'freight'));
   $$('[data-edit-tax]').forEach((button) => button.onclick = () => openListingModal(button.dataset.projectId,button.dataset.editTax,'tax'));
   $$('[data-listing-input]').forEach((input) => input.onblur = () => saveInlineListing(input));
@@ -531,9 +532,13 @@ function renderListingModal() {
     <div class="freight-detail-grid"><div><small>计费方式</small><b>${freightIsCbm ? '按体积（立方米）' : '按计费重量'}</b></div><div><small>当前头程费用</small><b>${result ? `${result.symbol}${result.freight_fee.toFixed(2)}` : '待计算'}</b></div><div><small>${freightIsCbm ? '商品体积' : '实际 / 体积重'}</small><b>${freightIsCbm ? `${formatNumber(result?.volume_cbm,6)} m³` : `${formatNumber(result?.actual_weight_kg,3)} / ${formatNumber(result?.volume_weight_kg,3)} kg`}</b></div><div><small>${freightIsCbm ? '计算公式' : '头程计费重'}</small><b>${freightIsCbm ? `${formatNumber(result?.volume_cbm,6)} × ¥${formatNumber(listing[freightField])}` : `${formatNumber(result?.billable_weight_kg,3)} kg`}</b></div></div>
     <div class="compact-form freight-rate-form"><label class="field span-2"><span>货代单价（修改后用于该站点全部品类）</span><div class="input-affix"><b>¥</b><input name="freight_rate" type="number" min="0" step="0.01" value="${Number(listing[freightField]) || 0}"><em>${freightIsCbm ? '元/方' : '元/KG'}</em></div></label></div>
   </section>` : '';
-  $('#listingModalTitle').textContent = `${country.flag} ${country.name}站${mode === 'commission' ? '佣金' : mode === 'freight' ? '头程费用' : '税项'}设置`;
+  const fbaSection = mode === 'fba' ? `<section class="modal-section"><div class="modal-section-title"><div><b>FBA 费用</b><small>可参考同类竞品填写包含仓储费的估算值</small></div></div>
+    <div class="freight-detail-grid"><div><small>系统自动计算</small><b>${result ? `${result.symbol}${formatNumber(result.fba_calculated_fee,2)}` : '待计算'}</b></div><div><small>当前利润采用</small><b>${result ? `${result.symbol}${formatNumber(result.fba_fee,2)}` : '待计算'}</b></div><div><small>命中费阶</small><b>${escapeHtml(result?.fba_rule_name || '未匹配')}</b></div><div><small>费用来源</small><b>${result?.fba_fee_overridden ? '手动费用' : '系统自动计算'}</b></div></div>
+    <div class="compact-form freight-rate-form"><label class="field span-2"><span>手动 FBA 费用（留空恢复自动计算）</span><div class="input-affix"><b>${escapeHtml(listing.symbol)}</b><input name="fba_fee_override" type="number" min="0" step="0.01" value="${listing.fba_fee_override ?? ''}" placeholder="自动 ${formatNumber(result?.fba_calculated_fee,2)}"></div></label></div>
+  </section>` : '';
+  $('#listingModalTitle').textContent = `${country.flag} ${country.name}站${mode === 'commission' ? '佣金' : mode === 'freight' ? '头程费用' : mode === 'fba' ? 'FBA费用' : '税项'}设置`;
   $('#listingModalBody').innerHTML = `<form id="listingSettingsForm">
-    ${commissionSection}${freightSection}${mode === 'tax' && code === 'JP' ? japanFields : ''}
+    ${commissionSection}${fbaSection}${freightSection}${mode === 'tax' && code === 'JP' ? japanFields : ''}
     <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>取消</button><button class="primary-button" type="submit">保存设置</button></div>
   </form>`;
   $('#listingSettingsForm').onsubmit = saveListingSettings;
@@ -552,6 +557,11 @@ async function saveListingSettings(event) {
   if (mode === 'commission') {
     changes.category_text = formField(form,'category_text').value.trim();
     changes.referral_rate_override = formField(form,'referral_rate_override').value === '' ? null : Number(formField(form,'referral_rate_override').value);
+  }
+  if (mode === 'fba') {
+    const raw=formField(form,'fba_fee_override').value;
+    changes.fba_fee_override=raw===''?null:Number(raw);
+    if(changes.fba_fee_override!==null&&(!Number.isFinite(changes.fba_fee_override)||changes.fba_fee_override<0))return toast('FBA费用请输入大于或等于 0 的数值');
   }
   if (mode === 'tax' && code === 'JP') {
     changes.customs_hs_code = $('#customsHsCode').value.replace(/\D/g,'');
