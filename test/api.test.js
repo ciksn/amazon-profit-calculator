@@ -52,6 +52,11 @@ test('接口返回各国尺寸分段、严格 FBA 和新增沙特佣金', async 
   const project=await (await fetch(`${base}/api/projects/${projectId}`)).json();
   const freight=await (await fetch(`${base}/api/rules/freight`)).json();
   assert.deepEqual(bootstrap.countries.map((country)=>country.code),['AU','US','GB','DE','JP','CA','AE','SA']);
+  const countryByCode=Object.fromEntries(bootstrap.countries.map((country)=>[country.code,country]));
+  assert.deepEqual(
+    ['GB','AE','SA'].map((code)=>[code,countryByCode[code].vat_rate,countryByCode[code].tax_rate,countryByCode[code].tax_basis]),
+    [['GB',20,10,'cost'],['AE',5,0,'none'],['SA',15,0,'none']]
+  );
   assert.ok(sizes.some((row)=>row.country_code==='US' && row.tier_code==='small_standard'));
   assert.ok(sizes.some((row)=>row.country_code==='SA' && row.tier_code==='standard_parcel'));
   assert.ok(commissions.some((row)=>row.country_code==='SA' && row.parent_category==='Electronics Accessories' && row.threshold_price===250));

@@ -100,15 +100,21 @@ test('英国同时扣除成本百分比税费和含税售价中的 VAT', () => {
   assert.equal(result.profit_rate,74.17);
 });
 
-test('沙特按售价的 15% 计算税费且不再拆 VAT', () => {
-  const result = calculateProfit({
-    project:{ cost_cny:0,length:1,width:1,height:1,dimension_unit:'cm',weight:0,weight_unit:'kg' },
-    country:{ code:'SA',currency:'SAR',symbol:'﷼',cny_per_local:2,vat_rate:0,tax_rate:15,tax_basis:'sale',tax_label:'税费预估',tax_note:'' },
-    listing:{ sale_price:100,referral_rate_override:0 }, fbaRules:[], freightRule:null
-  });
-  assert.equal(result.tax_fee,15);
-  assert.equal(result.vat_amount,0);
-  assert.equal(result.profit,85);
+test('阿联酋和沙特从含税售价中正确拆分 VAT', () => {
+  for (const [code,vatRate,grossPrice,expectedVat] of [
+    ['AE',5,105,5],
+    ['SA',15,115,15]
+  ]) {
+    const result = calculateProfit({
+      project:{ cost_cny:0,length:1,width:1,height:1,dimension_unit:'cm',weight:0,weight_unit:'kg' },
+      country:{ code,currency:code === 'AE' ? 'AED' : 'SAR',symbol:'¤',cny_per_local:2,vat_rate:vatRate,tax_rate:0,tax_basis:'none',tax_label:'税费预估',tax_note:'' },
+      listing:{ sale_price:grossPrice,referral_rate_override:0 }, fbaRules:[], freightRule:null
+    });
+    assert.equal(result.tax_fee,0);
+    assert.equal(result.vat_amount,expectedVat);
+    assert.equal(result.net_revenue,100);
+    assert.equal(result.profit,100);
+  }
 });
 
 test('日本按申报价依次计算关税和消费税', () => {
