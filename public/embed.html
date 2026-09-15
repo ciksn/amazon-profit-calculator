@@ -79,6 +79,18 @@
     </footer>
   </main>
   <input id="competitorExcelInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+  <div class="competitor-modal profit-detail-modal" id="profitDetailModal" hidden>
+    <button class="competitor-modal-backdrop" type="button" data-close-profit-detail aria-label="关闭利润计算器"></button>
+    <section class="competitor-modal-card profit-detail-card" role="dialog" aria-modal="true" aria-labelledby="profitDetailTitle">
+      <div class="competitor-modal-head"><div><b id="profitDetailTitle">利润计算器</b><small id="profitDetailSubtitle"></small></div><button type="button" class="modal-close" data-close-profit-detail aria-label="关闭">×</button></div>
+      <div class="profit-detail-metrics" id="profitDetailMetrics"></div>
+      <div class="roi-control"><label for="averageInventoryRate"><span>周期平均库存占货值</span><small>库存均匀售完时通常按 50%</small></label><div class="percent-input"><input id="averageInventoryRate" type="number" min="1" max="100" step="1" value="50"><em>%</em></div></div>
+      <div class="roi-formula" id="roiFormula"></div>
+      <div class="profit-parameter-title"><b>利润率计算参数</b><small>售价减去以下费用，得到单件利润</small></div>
+      <div class="profit-parameter-grid" id="profitParameterGrid"></div>
+      <div class="modal-actions"><button type="button" class="copy-button" data-close-profit-detail>完成</button></div>
+    </section>
+  </div>
   <div class="competitor-modal image-preview-modal" id="imagePreviewModal" hidden>
     <button class="competitor-modal-backdrop image-preview-backdrop" type="button" data-close-image-preview aria-label="关闭大图"></button>
     <figure class="image-preview-card" role="dialog" aria-modal="true" aria-labelledby="imagePreviewCaption">
@@ -182,6 +194,6 @@
   <script src="./dimensions.js"></script>
   <script src="./exceljs.min.js"></script>
   <script src="./competitor-import.js?v=20260722-3"></script>
-  <script src="./embed.js?v=20260904-1"></script>
+  <script src="./embed.js?v=20260915-1"></script>
 </body>
 </html>
