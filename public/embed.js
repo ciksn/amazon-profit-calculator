@@ -1,6 +1,6 @@
 'use strict';
 
-const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},competitorReviewOverviews:{},similarCompetitors:[],similarCounts:{},similarReviewOverviews:{},activeCompetitorSiteCode:'',activeSimilarSiteCode:'',competitorExpanded:true,competitorStatsExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',importKind:'standard',manualCountryCode:'',manualAnalysisCountryCode:'',manualAnalysisIds:[],manualAnalysisKind:'standard',clearCountryCode:'',clearKind:'standard',analyzingSiteCode:'',similarAnalyzingSiteCode:'',reviewAnalyzingKey:'',reviewOverviewExpanded:{},japanTariffPayload:null,japanTariffSelection:null,shareKey:'',readOnly:false,access:null,newInstance:false,saving:0,pending:Promise.resolve()};
+const state={bootstrap:null,project:null,results:[],competitors:[],competitorCounts:{},competitorReviewOverviews:{},similarCompetitors:[],similarCounts:{},similarReviewOverviews:{},activeCompetitorSiteCode:'',activeSimilarSiteCode:'',competitorExpanded:true,competitorStatsExpanded:true,marketExpanded:true,editingCompetitorId:null,importCountryCode:'',importKind:'standard',manualCountryCode:'',manualAnalysisCountryCode:'',manualAnalysisIds:[],manualAnalysisKind:'standard',clearCountryCode:'',clearKind:'standard',analyzingSiteCode:'',similarAnalyzingSiteCode:'',reviewAnalyzingKey:'',reviewOverviewExpanded:{},japanTariffPayload:null,japanTariffSelection:null,profitDetailCode:'',shareKey:'',readOnly:false,access:null,newInstance:false,saving:0,pending:Promise.resolve()};
 const $=(selector,root=document)=>root.querySelector(selector);
 const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];
 const apiBase=String(window.MARGINGO_API_BASE||'').replace(/\/$/,'');
@@ -168,14 +168,47 @@ function renderSites(){
   $('#siteCount').textContent=`已选 ${state.project.listings.filter((item)=>item.selected).length} 个站点`;
   $$('[data-country]').forEach((button)=>button.onclick=()=>toggleSite(button.dataset.country));
 }
-async function calculate(){const payload=await api('/api/calculate',{method:'POST',body:JSON.stringify({project_id:state.project.id})});state.results=payload.results||[];renderResults()}
+async function calculate(){const payload=await api('/api/calculate',{method:'POST',body:JSON.stringify({project_id:state.project.id,include_target_prices:true})});state.results=payload.results||[];renderResults();if(state.profitDetailCode)renderProfitDetail(state.profitDetailCode)}
+
+function estimatedRoi(result,averageInventoryRate=50){
+  const rate=Math.max(.01,Number(averageInventoryRate)||50)/100;
+  const averageInventory=Number(result?.product_cost||0)*rate;
+  return averageInventory>0?Number(result.profit||0)/averageInventory*100:null;
+}
+function detailMoney(result,value){return `${escapeHtml(result.symbol)}${number(value)}`}
+function profitParameter(label,value,note=''){
+  return `<div class="profit-parameter"><span>${escapeHtml(label)}</span><b>${value}</b>${note?`<small>${escapeHtml(note)}</small>`:''}</div>`;
+}
+function renderProfitDetail(code){
+  const modal=$('#profitDetailModal');if(!modal)return;
+  const listing=state.project.listings.find((item)=>item.country_code===code);const country=state.bootstrap.countries.find((item)=>item.code===code);const result=resultFor(code);
+  if(!listing||!country||!result){closeProfitDetail();return}
+  const averageRate=Number($('#averageInventoryRate')?.value)||50;const roi=estimatedRoi(result,averageRate);
+  $('#profitDetailTitle').textContent=`${country.flag} ${marketCode(code)} ${country.name}`;
+  $('#profitDetailSubtitle').textContent=`全部金额均为当地货币 ${result.currency}；人民币成本按汇率换算`;
+  $('#profitDetailMetrics').innerHTML=`<div><span>预计 ROI</span><b class="${roi>=0?'positive':'negative'}">${roi==null?'—':`${number(roi,1)}%`}</b><small>周期毛利 ÷ 周期平均库存金额</small></div><div><span>0% 利润率售价</span><b>${result.target_prices?.[0]==null?'—':detailMoney(result,result.target_prices[0])}</b><small>保本售价</small></div><div><span>30% 利润率售价</span><b>${result.target_prices?.[30]==null?'—':detailMoney(result,result.target_prices[30])}</b><small>由完整费率规则反推</small></div>`;
+  $('#profitParameterGrid').innerHTML=[
+    profitParameter('含税售价',detailMoney(result,result.sale_price)),
+    profitParameter('VAT',`− ${detailMoney(result,result.vat_amount)}`,`${number(result.vat_rate,1)}%`),
+    profitParameter('净销售收入',detailMoney(result,result.net_revenue)),
+    profitParameter(result.tax_label||'税费',`− ${detailMoney(result,result.tax_fee)}`,`${number(result.tax_rate,1)}%`),
+    profitParameter('亚马逊佣金',`− ${detailMoney(result,result.referral_fee)}`,`${number(result.referral_rate,2)}%`),
+    profitParameter('FBA 配送费',`− ${detailMoney(result,result.fba_fee)}`,result.fba_fee_overridden?'手动费用':result.size_tier_name),
+    profitParameter('头程运费',`− ${detailMoney(result,result.freight_fee)}`,`约 ¥${number(result.freight_cny)}`),
+    profitParameter('产品成本',`− ${detailMoney(result,result.product_cost)}`,`¥${number(state.project.cost_cny)} ÷ ${number(result.cny_per_local,4)}`),
+    profitParameter('单件利润',detailMoney(result,result.profit),`${number(result.profit_rate,1)}%`)
+  ].join('');
+  $('#roiFormula').textContent=roi==null?'产品成本为 0，暂无法计算 ROI':`${result.symbol}${number(result.profit)} ÷（${result.symbol}${number(result.product_cost)} × ${number(averageRate,1)}%）× 100 = ${number(roi,1)}%`;
+}
+function openProfitDetail(code){state.profitDetailCode=code;$('#averageInventoryRate').value='50';renderProfitDetail(code);$('#profitDetailModal').hidden=false;document.body.classList.add('modal-open')}
+function closeProfitDetail(){state.profitDetailCode='';$('#profitDetailModal').hidden=true;document.body.classList.remove('modal-open')}
 function renderResults(){
   const selected=state.project.listings.filter((item)=>item.selected);
   if(!selected.length){$('#resultRows').innerHTML='<tr><td class="empty-row" colspan="8">请至少选择一个测算站点</td></tr>';return}
   $('#resultRows').innerHTML=selected.map((listing)=>{
     const country=state.bootstrap.countries.find((item)=>item.code===listing.country_code);const result=resultFor(listing.country_code);const priced=Number(listing.sale_price)>0;const cls=priced?(Number(result?.profit)>=0?'positive':'negative'):'';const commission=listing.referral_rate_override??listing.matched_referral_rate??result?.referral_base_rate??15;
     const siteCardHref=state.shareKey?`./site-card.html?country=${listing.country_code}#${new URLSearchParams({key:state.shareKey})}`:`./site-card.html?project=${state.project.id}&country=${listing.country_code}`;
-    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.fba_fee_override??''}" placeholder="${result?number(result.fba_calculated_fee):'0.00'}" data-fba="${listing.country_code}" aria-label="${escapeHtml(country.name)}站手动FBA费用"></label><span class="subvalue">${result?.fba_fee_overridden?'手动费用':'留空使用自动值'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="${siteCardHref}" target="_blank" rel="noopener">单站卡片</a>${listing.country_code==='JP'?'<button class="japan-tax-button" type="button" data-japan-tax>税项设置</button>':''}</div></td></tr>`;
+    return `<tr><td class="country-cell">${country.flag} ${marketCode(country.code)}<small>${escapeHtml(country.name)}</small></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.sale_price||''}" placeholder="0.00" data-price="${listing.country_code}"></label></td><td>${number(commission)}%<span class="subvalue">${listing.referral_rate_override==null?escapeHtml(listing.matched_category||'默认费率'):'手动佣金'}</span></td><td><label class="price-input"><span>${escapeHtml(listing.symbol)}</span><input type="number" min="0" step="0.01" value="${listing.fba_fee_override??''}" placeholder="${result?number(result.fba_calculated_fee):'0.00'}" data-fba="${listing.country_code}" aria-label="${escapeHtml(country.name)}站手动FBA费用"></label><span class="subvalue">${result?.fba_fee_overridden?'手动费用':'留空使用自动值'}</span></td><td>${result?`${escapeHtml(result.symbol)}${number(result.freight_fee)}`:'—'}</td><td class="${cls}">${priced&&result?`${result.profit<0?'-':''}${escapeHtml(result.symbol)}${number(Math.abs(result.profit))}`:'—'}</td><td class="profit-rate-cell ${cls}"><b>${priced&&result?`${number(result.profit_rate,1)}%`:'—'}</b>${priced?profitInfoIcon(result):''}</td><td><div class="row-actions"><button class="row-more-button" type="button" data-profit-detail="${listing.country_code}" ${priced&&result?'':'disabled'}>更多</button><button class="row-copy-button" type="button" data-copy-listing="${listing.country_code}">复制</button><a class="row-card-link" href="${siteCardHref}" target="_blank" rel="noopener">单站卡片</a>${listing.country_code==='JP'?'<button class="japan-tax-button" type="button" data-japan-tax>税项设置</button>':''}</div></td></tr>`;
   }).join('');
   $$('[data-price]').forEach((input)=>{
     input.oninput=()=>{clearTimeout(input.saveTimer);input.saveTimer=setTimeout(()=>{state.pending=savePrice(input.dataset.price,input.value)},450)};
@@ -651,6 +684,9 @@ function bindEvents(){
   $('#confirmProjectDelete').onclick=confirmProjectDelete;
   $$('[data-cancel-project-delete]').forEach((button)=>button.onclick=cancelProjectDelete);
   $('#copySiteProfitBtn').onclick=copySiteProfitTable;
+  $('#resultRows').onclick=(event)=>{const button=event.target.closest('[data-profit-detail]');if(button)openProfitDetail(button.dataset.profitDetail)};
+  $('#averageInventoryRate').oninput=()=>{if(state.profitDetailCode)renderProfitDetail(state.profitDetailCode)};
+  $$('[data-close-profit-detail]').forEach((button)=>button.onclick=closeProfitDetail);
   $('#japanTaxForm').onsubmit=saveJapanTax;
   $('#lookupJapanTaxBtn').onclick=lookupJapanTax;
   $$('[data-close-japan-tax]').forEach((button)=>button.onclick=closeJapanTaxModal);
@@ -676,7 +712,7 @@ function bindEvents(){
   $('#similarGroups').onclick=(event)=>{if(handleReviewClick(event.target))return;const preview=event.target.closest('[data-preview-image]');if(preview)return openImagePreview(preview);const imported=event.target.closest('[data-import-similar]');if(imported)return beginCompetitorImport(imported.dataset.importSimilar,'similar');const copy=event.target.closest('[data-copy-similar]');if(copy)return copySimilarTable(copy.dataset.copySimilar).catch((error)=>toast(error.message));const analyze=event.target.closest('[data-analyze-similar]');if(analyze)return analyzeCompetitors(analyze.dataset.analyzeSimilar,'similar');const clear=event.target.closest('[data-clear-similar]');if(clear)return clearCompetitors(clear.dataset.clearSimilar,'similar')};
   $$('[data-close-image-preview]').forEach((button)=>button.onclick=closeImagePreview);
   $$('[data-close-review-detail]').forEach((button)=>button.onclick=closeReviewDetail);
-  document.addEventListener('keydown',(event)=>{if(event.key!=='Escape')return;if(!$('#reviewDetailModal').hidden)closeReviewDetail();else if(!$('#imagePreviewModal').hidden)closeImagePreview()});
+  document.addEventListener('keydown',(event)=>{if(event.key!=='Escape')return;if(!$('#profitDetailModal').hidden)closeProfitDetail();else if(!$('#reviewDetailModal').hidden)closeReviewDetail();else if(!$('#imagePreviewModal').hidden)closeImagePreview()});
   $('#competitorCostForm').onsubmit=saveCompetitorCost;
   $('#manualCompetitorForm').onsubmit=saveManualCompetitor;
   $$('[data-close-manual-competitor]').forEach((button)=>button.onclick=closeManualCompetitor);
