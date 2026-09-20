@@ -96,6 +96,39 @@ async function getProject(id,ownerId=currentOwnerId()) {
   return project;
 }
 
+async function ensureSiteCardVariants(project,ownerId=currentOwnerId()) {
+  let variants=await db.many(`SELECT * FROM site_card_variants
+    WHERE project_id=$1 AND owner_user_id=$2 ORDER BY sort_order,id`,[project.id,ownerId]);
+  if(!variants.length){
+    variants=await db.transaction(async(client)=>{
+    await client.query('SELECT id FROM projects WHERE id=$1 AND owner_user_id=$2 FOR UPDATE',[project.id,ownerId]);
+    const existing=(await client.query('SELECT * FROM site_card_variants WHERE project_id=$1 AND owner_user_id=$2 ORDER BY sort_order,id',[project.id,ownerId])).rows;
+    if(existing.length)return existing;
+    const now=new Date().toISOString();
+    const variant=(await client.query(`INSERT INTO site_card_variants
+      (project_id,owner_user_id,name,cost_cny,length,width,height,dimension_unit,weight,weight_unit,sort_order,created_at,updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$11) RETURNING *`,[
+      project.id,ownerId,'默认变体',project.cost_cny,project.length,project.width,project.height,
+      project.dimension_unit,project.weight,project.weight_unit,now])).rows[0];
+    await client.query(`INSERT INTO site_card_variant_listings
+      (variant_id,project_id,owner_user_id,country_code,sale_price,updated_at)
+      SELECT $1::integer,$2::integer,$3::bigint,country_code,sale_price,$4::timestamptz FROM project_countries
+      WHERE project_id=$2 AND owner_user_id=$3`,[variant.id,project.id,ownerId,now]);
+    return [variant];
+    });
+  }
+  const listings=await db.many(`SELECT * FROM site_card_variant_listings
+    WHERE project_id=$1 AND owner_user_id=$2`,[project.id,ownerId]);
+  return variants.map((variant)=>({...variant,listings:listings.filter((item)=>Number(item.variant_id)===Number(variant.id))}));
+}
+
+async function siteCardVariantPayload(project,countryCode,ownerId=currentOwnerId()){
+  const variants=await ensureSiteCardVariants(project,ownerId);
+  return variants.map((variant)=>({...variant,
+    sale_price:Number(variant.listings.find((item)=>item.country_code===countryCode)?.sale_price)||0,
+    listings:undefined}));
+}
+
 async function calculateCompetitor(row,ownerId=currentOwnerId()) {
   const project=await getProject(Number(row.project_id),ownerId);
   if (!project) return null;
@@ -471,6 +504,10 @@ async function prepareEmbedRequest(req,res,url) {
       if(countryCode){params.push(countryCode);where+=' AND country_code=$3'}
       return json(res,200,{records:await db.many(`SELECT * FROM site_card_records WHERE ${where} ORDER BY created_at,id`,params)});
     }
+    if(url.pathname==='/api/embed/site-card-variants'&&req.method==='GET'){
+      const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();
+      return json(res,200,{variants:await siteCardVariantPayload(await getProject(projectId,ownerId),countryCode,ownerId)});
+    }
     if(url.pathname==='/api/embed/calculate'&&req.method==='POST')return json(res,200,await calculateProjectPayload(await getProject(projectId,ownerId),await readBody(req)));
     return json(res,403,{error:'这是他人共享的项目，仅归属人可以修改'});
   }
@@ -496,6 +533,11 @@ async function prepareEmbedRequest(req,res,url) {
   if (url.pathname==='/api/embed/site-card-records') {
     url.pathname=`/api/projects/${projectId}/site-card-records`;return false;
   }
+  if(url.pathname==='/api/embed/site-card-variants'){
+    url.pathname=`/api/projects/${projectId}/site-card-variants`;return false;
+  }
+  const variantItem=url.pathname.match(/^\/api\/embed\/site-card-variants\/(\d+)$/);
+  if(variantItem){const owned=await db.one('SELECT id FROM site_card_variants WHERE id=$1 AND project_id=$2 AND owner_user_id=$3',[Number(variantItem[1]),projectId,currentOwnerId()]);if(!owned){json(res,404,{error:'变体不存在'});return true;}url.pathname=`/api/site-card-variants/${variantItem[1]}`;return false;}
   const recordItem=url.pathname.match(/^\/api\/embed\/site-card-records\/([^/]+)$/);
   if (recordItem) {
     const id=decodeURIComponent(recordItem[1]);
@@ -508,14 +550,28 @@ async function prepareEmbedRequest(req,res,url) {
 
 async function calculateProjectPayload(project,body={}){
   if(!project)return null;
+  let calculationProject=project;let variant=null;
+  if(Number(body.variant_id)){
+    variant=await db.one('SELECT * FROM site_card_variants WHERE id=$1 AND project_id=$2 AND owner_user_id=$3',
+      [Number(body.variant_id),project.id,currentOwnerId()]);
+    if(!variant)throw Object.assign(new Error('变体不存在'),{statusCode:404});
+    if(variant)calculationProject={...project,...variant,id:project.id};
+  }else if(Object.hasOwn(body,'cost_cny_override'))calculationProject={...project,cost_cny:Number(body.cost_cny_override)||0};
   const countries=await db.many('SELECT * FROM countries WHERE active=TRUE ORDER BY priority');const results=[];
   const listings=body.country_code?project.listings.filter((item)=>item.country_code===body.country_code):project.listings.filter((item)=>item.selected);
-  for(const listing of listings){
+  for(const sourceListing of listings){
+    let listing={...sourceListing};
+    if(variant){const saved=await db.one('SELECT sale_price FROM site_card_variant_listings WHERE variant_id=$1 AND country_code=$2 AND owner_user_id=$3',[variant.id,listing.country_code,currentOwnerId()]);listing.sale_price=Number(saved?.sale_price)||0;listing.fba_fee_override=null;}
+    else if(Object.hasOwn(body,'sale_price_override'))listing.sale_price=Number(body.sale_price_override)||0;
+    if(variant&&listing.referral_rate_override==null&&listing.category_text){
+      const matched=await matchCommission(listing.country_code,listing.category_text,listing.sale_price);
+      if(matched.matched)Object.assign(listing,{matched_category:matched.rule.parent_category,matched_referral_rate:matched.rule.rate,matched_referral_threshold:matched.rule.threshold_price,matched_referral_rate_above:matched.rule.rate_above,matched_referral_minimum:matched.rule.minimum_fee||0});
+    }
     const country=countries.find((item)=>item.code===listing.country_code);if(!country)continue;
     const [fbaRules,sizeTiers,freightRule]=await Promise.all([db.many('SELECT * FROM fba_rules WHERE country_code=$1',[country.code]),db.many('SELECT * FROM size_tiers WHERE country_code=$1',[country.code]),db.one('SELECT * FROM freight_rules WHERE country_code=$1',[country.code])]);
-    const result=calculateProfit({project,country,listing,fbaRules,sizeTiers,freightRule});
-    if(body.include_target_prices)result.target_prices=Object.fromEntries([0,10,20,30].map((targetRate)=>[targetRate,findSalePriceForProfitRate({project,country,listing,fbaRules,sizeTiers,freightRule,targetRate})]));
-    results.push(result);
+    const result=calculateProfit({project:calculationProject,country,listing,fbaRules,sizeTiers,freightRule});
+    if(body.include_target_prices)result.target_prices=Object.fromEntries([0,10,20,30].map((targetRate)=>[targetRate,findSalePriceForProfitRate({project:calculationProject,country,listing,fbaRules,sizeTiers,freightRule,targetRate})]));
+    results.push({...result,variant_id:variant?.id||null,variant_name:variant?.name||''});
   }
   return {project_id:project.id,results};
 }
@@ -536,6 +592,61 @@ async function api(req,res,url) {
     const row=await db.one('SELECT id,owner_user_id FROM projects WHERE share_key=$1 AND share_enabled=TRUE',[shareProjectMatch[1]]);
     if (!row) return json(res,404,{ error:'分享项目不存在' });
     return json(res,200,sharedProjectPayload(await getProject(row.id,row.owner_user_id)));
+  }
+
+  const siteCardVariantCollectionMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/site-card-variants$/);
+  if(siteCardVariantCollectionMatch&&method==='GET'){
+    const project=await getProject(Number(siteCardVariantCollectionMatch[1]));
+    if(!project)return json(res,404,{error:'品类不存在'});
+    const countryCode=String(url.searchParams.get('country_code')||'').toUpperCase();
+    return json(res,200,{variants:await siteCardVariantPayload(project,countryCode)});
+  }
+  if(siteCardVariantCollectionMatch&&method==='POST'){
+    const project=await getProject(Number(siteCardVariantCollectionMatch[1]));
+    if(!project)return json(res,404,{error:'品类不存在'});
+    const body=await readBody(req);const existing=await ensureSiteCardVariants(project);let source=null;
+    if(Number(body.copy_from))source=existing.find((item)=>Number(item.id)===Number(body.copy_from));
+    const base=source||project;const now=new Date().toISOString();
+    const variant=await db.one(`INSERT INTO site_card_variants
+      (project_id,owner_user_id,name,cost_cny,length,width,height,dimension_unit,weight,weight_unit,sort_order,created_at,updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) RETURNING *`,[
+      project.id,currentOwnerId(),String(body.name||`变体 ${existing.length+1}`).trim().slice(0,80),
+      Number(base.cost_cny)||0,Number(base.length)||0,Number(base.width)||0,Number(base.height)||0,
+      base.dimension_unit||'cm',Number(base.weight)||0,base.weight_unit||'kg',existing.length,now]);
+    if(source)await db.query(`INSERT INTO site_card_variant_listings
+      (variant_id,project_id,owner_user_id,country_code,sale_price,updated_at)
+      SELECT $1::integer,project_id,owner_user_id,country_code,sale_price,$2::timestamptz FROM site_card_variant_listings WHERE variant_id=$3`,[variant.id,now,source.id]);
+    else await db.query(`INSERT INTO site_card_variant_listings
+      (variant_id,project_id,owner_user_id,country_code,sale_price,updated_at)
+      SELECT $1::integer,project_id,owner_user_id,country_code,sale_price,$2::timestamptz FROM project_countries WHERE project_id=$3 AND owner_user_id=$4`,[variant.id,now,project.id,currentOwnerId()]);
+    return json(res,201,variant);
+  }
+  const siteCardVariantMatch=url.pathname.match(/^\/api\/site-card-variants\/(\d+)$/);
+  if(siteCardVariantMatch&&method==='PUT'){
+    const id=Number(siteCardVariantMatch[1]);const body=await readBody(req);
+    const variant=await db.one('SELECT * FROM site_card_variants WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
+    if(!variant)return json(res,404,{error:'变体不存在'});
+    for(const key of ['cost_cny','length','width','height','weight','sale_price'])if(Object.hasOwn(body,key)&&(!Number.isFinite(Number(body[key]))||Number(body[key])<0))return json(res,400,{error:'成本、尺寸、重量和售价必须为非负数'});
+    if(Object.hasOwn(body,'dimension_unit')&&!['cm','ft'].includes(body.dimension_unit))return json(res,400,{error:'尺寸单位不正确'});
+    if(Object.hasOwn(body,'weight_unit')&&!['kg','lb'].includes(body.weight_unit))return json(res,400,{error:'重量单位不正确'});
+    if(body.country_code&&!await db.one('SELECT country_code FROM project_countries WHERE project_id=$1 AND owner_user_id=$2 AND country_code=$3',[variant.project_id,currentOwnerId(),String(body.country_code).toUpperCase()]))return json(res,400,{error:'站点不存在'});
+    const allowed=['name','cost_cny','length','width','height','dimension_unit','weight','weight_unit'];
+    const fields=allowed.filter((key)=>Object.hasOwn(body,key));
+    if(fields.length){const now=new Date().toISOString();const normalized=fields.map((key)=>['name','dimension_unit','weight_unit'].includes(key)?String(body[key]||'').trim():Number(body[key])||0);await db.query(updateSql('site_card_variants',[...fields,'updated_at'],`id=$${fields.length+2} AND owner_user_id=$${fields.length+3}`),[...normalized,now,id,currentOwnerId()]);}
+    const countryCode=String(body.country_code||'').toUpperCase();
+    if(countryCode&&Object.hasOwn(body,'sale_price'))await db.query(`INSERT INTO site_card_variant_listings
+      (variant_id,project_id,owner_user_id,country_code,sale_price,updated_at) VALUES ($1,$2,$3,$4,$5,$6)
+      ON CONFLICT (variant_id,country_code) DO UPDATE SET sale_price=EXCLUDED.sale_price,updated_at=EXCLUDED.updated_at`,
+      [id,variant.project_id,currentOwnerId(),countryCode,Number(body.sale_price)||0,new Date().toISOString()]);
+    const updated=await db.one('SELECT * FROM site_card_variants WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
+    return json(res,200,{...updated,sale_price:countryCode?Number((await db.one('SELECT sale_price FROM site_card_variant_listings WHERE variant_id=$1 AND country_code=$2',[id,countryCode]))?.sale_price)||0:undefined});
+  }
+  if(siteCardVariantMatch&&method==='DELETE'){
+    const id=Number(siteCardVariantMatch[1]);const variant=await db.one('SELECT * FROM site_card_variants WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
+    if(!variant)return json(res,404,{error:'变体不存在'});
+    const count=await db.one('SELECT COUNT(*)::int AS n FROM site_card_variants WHERE project_id=$1 AND owner_user_id=$2',[variant.project_id,currentOwnerId()]);
+    if(Number(count.n)<=1)return json(res,400,{error:'至少保留一个变体'});
+    await db.query('DELETE FROM site_card_variants WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);return json(res,200,{ok:true});
   }
 
   const siteCardCollectionMatch=url.pathname.match(/^\/api\/projects\/(\d+)\/site-card-records$/);
@@ -560,11 +671,13 @@ async function api(req,res,url) {
       :json(res,409,{error:'方案记录 ID 已存在'});
     const snapshot=body.snapshot&&typeof body.snapshot==='object'&&!Array.isArray(body.snapshot)?body.snapshot:{};
     const now=new Date().toISOString();
+    const variantId=Number(body.variant_id)||null;const variantName=String(body.variant_name||'').trim().slice(0,80);
+    if(variantId&&!await db.one('SELECT id FROM site_card_variants WHERE id=$1 AND project_id=$2 AND owner_user_id=$3',[variantId,projectId,currentOwnerId()]))return json(res,400,{error:'变体不存在'});
     const record=await db.one(`INSERT INTO site_card_records
-      (id,project_id,owner_user_id,country_code,name,cost_cny,sale_price,snapshot,created_at,updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) ON CONFLICT (id) DO NOTHING RETURNING *`,[
+      (id,project_id,owner_user_id,country_code,name,cost_cny,sale_price,snapshot,variant_id,variant_name,created_at,updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) ON CONFLICT (id) DO NOTHING RETURNING *`,[
       id,projectId,currentOwnerId(),countryCode,String(body.name||'').trim().slice(0,200),Number(body.cost_cny)||0,
-      Number(body.sale_price)||0,JSON.stringify(snapshot),now]);
+      Number(body.sale_price)||0,JSON.stringify(snapshot),variantId,variantName,now]);
     if(record)return json(res,201,record);
     const existing=await db.one('SELECT * FROM site_card_records WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
     return existing&&Number(existing.project_id)===projectId?json(res,200,existing):json(res,409,{error:'方案记录 ID 已存在'});
@@ -576,7 +689,7 @@ async function api(req,res,url) {
     const owned=await db.one('SELECT id FROM site_card_records WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
     if(!owned)return json(res,404,{error:'方案记录不存在'});
     const allowed=['name','cost_cny','sale_price','snapshot'];const fields=allowed.filter((key)=>Object.hasOwn(body,key));
-    const values=fields.map((key)=>key==='name'?String(body[key]||'').trim().slice(0,200):key==='snapshot'?JSON.stringify(body[key]&&typeof body[key]==='object'&&!Array.isArray(body[key])?body[key]:{}):Number(body[key])||0);
+    const values=fields.map((key)=>['name','variant_name'].includes(key)?String(body[key]||'').trim().slice(0,200):key==='snapshot'?JSON.stringify(body[key]&&typeof body[key]==='object'&&!Array.isArray(body[key])?body[key]:{}):key==='variant_id'?(Number(body[key])||null):Number(body[key])||0);
     if (fields.length) { fields.push('updated_at');values.push(new Date().toISOString());await db.query(updateSql('site_card_records',fields,`id=$${fields.length+1} AND owner_user_id=$${fields.length+2}`),[...values,id,currentOwnerId()]); }
     const record=await db.one('SELECT * FROM site_card_records WHERE id=$1 AND owner_user_id=$2',[id,currentOwnerId()]);
     return record?json(res,200,record):json(res,404,{ error:'方案记录不存在' });
